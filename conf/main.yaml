@@ -14,7 +14,7 @@ paths:
   # area_shapefile: documentos/feicoes_2024.zip
   # plataformas_shp: ${paths.raw_data}/plataformas.zip
   # plataformas_shp: ${paths.raw_data}/plataforms/Plataformas.zip
-  plataformas_shp: documentos/20_de_junho.zip
+  plataformas_shp: documentos/JUNHO_COMPLETA.zip
 
 copernicusmarine:
   folder: marine_copernicus
