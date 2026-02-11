@@ -23,6 +23,7 @@ pyproj
 xarray
 cartopy
 netCDF4 
+h5py
 roaring-landmask
 cmocean
 geojson
@@ -35,3 +36,5 @@ utm
 xhistogram
 scipy
 psutil
+flet
+opendrift

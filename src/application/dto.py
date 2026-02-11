@@ -8,6 +8,7 @@ class ConfigRequest:
     config_name: str = "main"
     environment: str = "2019"
     simulation_name: str = "sim4validation"
+    run_name: Optional[str] = None
     shp_zip: Optional[str] = None
     min_long: Optional[float] = None
     max_long: Optional[float] = None
@@ -26,6 +27,8 @@ class ConfigRequest:
             overrides.append(f"copernicusmarine.min_lat={self.min_lat}")
         if self.max_lat is not None:
             overrides.append(f"copernicusmarine.max_lat={self.max_lat}")
+        if self.run_name:
+            overrides.append(f'simulation.name="{self.run_name}"')
         return overrides
 
 
@@ -123,3 +126,19 @@ class ValidationRunRequest:
     max_lat: Optional[float] = None
     start_index: int = 0
     optimize_cdf_hd_de: bool = False
+    run_name: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ValidationRunResult:
+    run_name: str
+    out_dir: Path
+    sim_path: Path
+    wind_drift_factor: Optional[float] = None
+    stokes_drift: Optional[bool] = None
+    current_drift_factor: Optional[float] = None
+    horizontal_diffusivity: Optional[float] = None
+    oil_type: Optional[str] = None
+    comparison_gif: Optional[Path] = None
+    frames_dir: Optional[Path] = None
+    artifact_paths: Tuple[Path, ...] = ()

@@ -20,7 +20,7 @@ copernicusmarine:
   folder: marine_copernicus
   specificities: ${environment}
   buffer_dg: 3.0
-  min_long: -43.177087
-  max_long: -42.520887
-  min_lat: -25.478728
-  max_lat: -24.968139
+  min_long: -43.300000
+  max_long: -42.000000
+  min_lat: -25.900000
+  max_lat: -24.000000

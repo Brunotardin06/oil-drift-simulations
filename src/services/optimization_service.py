@@ -32,7 +32,10 @@ class OptimizationService:
         horizontal_diffusivity=None,
         oil_type=None,
         progress=None,
+        should_cancel=None,
     ):
+        if should_cancel is not None and should_cancel():
+            raise RuntimeError("Execution cancelled by user.")
         if "datetime" not in manchas.columns:
             raise ValueError("Expected 'datetime' column in manchas")
         if particles_per_wdf < 1:
@@ -43,8 +46,9 @@ class OptimizationService:
         if wdf_values.size == 0:
             raise ValueError("wdf_values must contain at least one finite value")
 
-        # Keep existing behavior for backward compatibility with current experiments.
-        shape_inicial = manchas.iloc[1] if len(manchas) > 1 else manchas.iloc[0]
+        # Use the first observed timestep as seed to keep behavior consistent
+        # with the main simulation service and support short (2-step) cases.
+        shape_inicial = manchas.iloc[0]
         seed_time_start = shape_inicial["datetime"]
         shape_final = manchas.loc[manchas["datetime"].idxmax()]
         end_time = shape_final["datetime"]
@@ -111,6 +115,8 @@ class OptimizationService:
         )
 
         model.prepare_run()
+        if should_cancel is not None and should_cancel():
+            raise RuntimeError("Execution cancelled by user.")
         model.run(
             end_time=end_time,
             time_step=config.simulation.time_step_minutes * 60,
@@ -170,6 +176,7 @@ class OptimizationService:
         particles_per_wdf=1,
         oil_type=None,
         progress=None,
+        should_cancel=None,
     ):
         if isinstance(current_drift_values, (int, float, np.floating, np.integer)):
             current_drift_values = [float(current_drift_values)]
@@ -189,6 +196,8 @@ class OptimizationService:
         results = []
         for current_drift_factor in current_drift_values:
             for horizontal_diffusivity in horizontal_diffusivity_values:
+                if should_cancel is not None and should_cancel():
+                    raise RuntimeError("Execution cancelled by user.")
                 _, dataframe = self.fast_grid_search_wind_drift_factor(
                     manchas,
                     config,
@@ -199,6 +208,7 @@ class OptimizationService:
                     horizontal_diffusivity=horizontal_diffusivity,
                     oil_type=oil_type,
                     progress=progress,
+                    should_cancel=should_cancel,
                 )
                 if dataframe.empty:
                     continue
@@ -215,4 +225,3 @@ class OptimizationService:
         if not results_df.empty and results_df["skillscore"].notna().any():
             best_row = results_df.loc[results_df["skillscore"].idxmax()]
         return best_row, results_df
-

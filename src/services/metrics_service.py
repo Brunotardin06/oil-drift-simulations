@@ -30,6 +30,17 @@ class MetricsService:
         merged = merged.dropna(subset=["lon_obs", "lat_obs", "lon_mod", "lat_mod"])
         if len(merged) < 2:
             return np.nan
+        if len(merged) < 3:
+            # With only 2 matched timestamps, trajectory-based skill is unstable.
+            # Use endpoint distance and convert to a bounded "higher-is-better" score.
+            endpoint_distance_m = self.haversine_m(
+                merged["lon_obs"].iloc[-1],
+                merged["lat_obs"].iloc[-1],
+                merged["lon_mod"].iloc[-1],
+                merged["lat_mod"].iloc[-1],
+            )
+            endpoint_distance_km = float(endpoint_distance_m) / 1000.0
+            return 1.0 / (1.0 + endpoint_distance_km)
 
         obs_lon = merged["lon_obs"].to_numpy()
         obs_lat = merged["lat_obs"].to_numpy()
@@ -42,4 +53,3 @@ class MetricsService:
         if denominator <= 0:
             return np.nan
         return 1.0 - (np.nansum(separation[1:]) / denominator)
-

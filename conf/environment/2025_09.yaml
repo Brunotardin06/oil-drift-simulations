@@ -1,3 +1,4 @@
+# Use MY products for historical replay windows.
 water_dataset_id: cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i
 wind_dataset_id: cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H
 wave_dataset_id: cmems_mod_glo_wav_my_0.2deg_PT3H-i

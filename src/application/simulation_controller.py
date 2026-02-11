@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -18,26 +18,41 @@ from src.application.dto import (
     ObservedSpillRequest,
     SimulationRunRequest,
     ValidationRunRequest,
+    ValidationRunResult,
 )
 from src.infrastructure.environment_repository import EnvironmentRepository
 from src.infrastructure.spill_repository import SpillRepository
 from src.infrastructure.workspace_repository import WorkspaceRepository
+from src.infrastructure.copernicus_gateway import CopernicusGateway
 from src.services.optimization_service import OptimizationService
 from src.services.output_service import OutputService
 from src.services.simulation_service import SimulationService
 
 
 class _ProgressPrinter:
-    def __init__(self, total, every=15, label="Progress"):
+    def __init__(
+        self,
+        total,
+        every=15,
+        label="Progress",
+        on_tick: Optional[Callable[[int, int], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ):
         self.total = int(total)
         self.every = int(every)
         self.label = label
         self.count = 0
+        self.on_tick = on_tick
+        self.should_cancel = should_cancel
 
     def tick(self, n=1):
+        if self.should_cancel is not None and self.should_cancel():
+            raise RuntimeError("Execution cancelled by user.")
         if self.total <= 0:
             return
         self.count += int(n)
+        if self.on_tick is not None:
+            self.on_tick(self.count, self.total)
         if self.count % self.every == 0 or self.count >= self.total:
             print(f"{self.label}: {self.count}/{self.total}")
 
@@ -69,6 +84,7 @@ class SimulationController:
         spill_repository: Optional[SpillRepository] = None,
         environment_repository: Optional[EnvironmentRepository] = None,
         workspace_repository: Optional[WorkspaceRepository] = None,
+        copernicus_gateway: Optional[CopernicusGateway] = None,
         optimization_service: Optional[OptimizationService] = None,
         simulation_service: Optional[SimulationService] = None,
         output_service: Optional[OutputService] = None,
@@ -76,6 +92,7 @@ class SimulationController:
         self.spill_repository = spill_repository or SpillRepository()
         self.environment_repository = environment_repository or EnvironmentRepository()
         self.workspace_repository = workspace_repository or WorkspaceRepository()
+        self.copernicus_gateway = copernicus_gateway or CopernicusGateway()
         self.optimization_service = optimization_service or OptimizationService(
             spill_repository=self.spill_repository
         )
@@ -177,12 +194,108 @@ class SimulationController:
             sim_filename = f"{sim_filename}_{'evap' if processes_evaporation else 'noevap'}"
         return sim_filename
 
+    @staticmethod
+    def _check_cancelled(should_cancel: Optional[Callable[[], bool]]) -> None:
+        if should_cancel is not None and should_cancel():
+            raise RuntimeError("Execution cancelled by user.")
+
     def load_config(self, request: ConfigRequest):
         return self.environment_repository.compose_config(
             config_name=request.config_name,
             environment=request.environment,
             additional_overrides=request.to_overrides(),
         )
+
+    def download_environment_data(
+        self,
+        environment: str,
+        config_name: str = "main",
+        force: bool = False,
+        log_callback: Optional[Callable[[str], None]] = None,
+        copernicus_username: Optional[str] = None,
+        copernicus_password: Optional[str] = None,
+        min_long: Optional[float] = None,
+        max_long: Optional[float] = None,
+        min_lat: Optional[float] = None,
+        max_lat: Optional[float] = None,
+    ) -> dict:
+        config = self.load_config(
+            ConfigRequest(
+                config_name=config_name,
+                environment=environment,
+                simulation_name="sim4validation",
+                min_long=min_long,
+                max_long=max_long,
+                min_lat=min_lat,
+                max_lat=max_lat,
+            )
+        )
+        return self.copernicus_gateway.download_environment_data(
+            config=config,
+            force=force,
+            log_callback=log_callback,
+            username=copernicus_username,
+            password=copernicus_password,
+        )
+
+    @staticmethod
+    def _dataset_coord_range(ds, names: tuple[str, ...]) -> tuple[float, float]:
+        for name in names:
+            if name in ds.coords or name in ds.variables:
+                values = np.asarray(ds[name].values, dtype=float)
+                finite = values[np.isfinite(values)]
+                if finite.size:
+                    return float(finite.min()), float(finite.max())
+        raise ValueError(f"Could not find coordinate names {names} in dataset.")
+
+    @staticmethod
+    def _has_overlap(a_min: float, a_max: float, b_min: float, b_max: float) -> bool:
+        return not (a_max < b_min or a_min > b_max)
+
+    def _validate_environment_coverage(self, config, manchas) -> None:
+        obs_min_lon, obs_min_lat, obs_max_lon, obs_max_lat = [float(v) for v in manchas.total_bounds]
+        obs_times = pd.to_datetime(manchas["datetime"], errors="coerce").dropna()
+        obs_min_time = obs_times.min() if not obs_times.empty else None
+        obs_max_time = obs_times.max() if not obs_times.empty else None
+
+        required = [
+            ("water", Path(config.copernicusmarine.specificities.water_dataset_path)),
+            ("wind", Path(config.copernicusmarine.specificities.wind_dataset_path)),
+        ]
+        for name, dataset_path in required:
+            if not dataset_path.exists():
+                raise ValueError(
+                    f"Required dataset not found: {dataset_path}. "
+                    f"Download environment data before execution."
+                )
+            with xr.open_dataset(dataset_path) as ds:
+                ds_min_lon, ds_max_lon = self._dataset_coord_range(ds, ("longitude", "lon", "x"))
+                ds_min_lat, ds_max_lat = self._dataset_coord_range(ds, ("latitude", "lat", "y"))
+                if not self._has_overlap(obs_min_lon, obs_max_lon, ds_min_lon, ds_max_lon) or not self._has_overlap(
+                    obs_min_lat, obs_max_lat, ds_min_lat, ds_max_lat
+                ):
+                    raise ValueError(
+                        f"Observed spill area is outside '{name}' dataset coverage. "
+                        f"Observed lon/lat=[{obs_min_lon:.5f},{obs_max_lon:.5f}] / "
+                        f"[{obs_min_lat:.5f},{obs_max_lat:.5f}], "
+                        f"dataset lon/lat=[{ds_min_lon:.5f},{ds_max_lon:.5f}] / "
+                        f"[{ds_min_lat:.5f},{ds_max_lat:.5f}]. "
+                        f"Re-download environment data for the selected observed ZIP."
+                    )
+
+                if obs_min_time is not None and obs_max_time is not None and ("time" in ds.coords or "time" in ds.variables):
+                    ds_times = pd.to_datetime(ds["time"].values, errors="coerce")
+                    ds_times = ds_times[~pd.isna(ds_times)]
+                    if len(ds_times):
+                        ds_min_time = ds_times.min()
+                        ds_max_time = ds_times.max()
+                        if obs_max_time < ds_min_time or obs_min_time > ds_max_time:
+                            raise ValueError(
+                                f"Observed spill time window is outside '{name}' dataset time coverage. "
+                                f"Observed=[{obs_min_time},{obs_max_time}], "
+                                f"dataset=[{ds_min_time},{ds_max_time}]. "
+                                f"Check environment month and re-download data."
+                            )
 
     def load_observed_spills(self, request: ObservedSpillRequest) -> ObservedSpillContext:
         manchas = gpd.read_file(Path(request.spill_path)).to_crs(epsg=4326)
@@ -221,6 +334,7 @@ class SimulationController:
         particles_per_wdf=1,
         oil_type=None,
         progress=None,
+        should_cancel=None,
     ):
         return self.optimization_service.fast_grid_search_wdf_stokes_current_drift(
             manchas=manchas,
@@ -232,6 +346,7 @@ class SimulationController:
             particles_per_wdf=particles_per_wdf,
             oil_type=oil_type,
             progress=progress,
+            should_cancel=should_cancel,
         )
 
     def optimize_wdf_stokes_current_drift_request(self, request: FastOptimizationRequest):
@@ -245,6 +360,7 @@ class SimulationController:
             particles_per_wdf=request.particles_per_wdf,
             oil_type=request.oil_type,
             progress=request.progress,
+            should_cancel=getattr(request, "should_cancel", None),
         )
 
     def run_simulation(
@@ -318,6 +434,7 @@ class SimulationController:
                 config_name=request.config_name,
                 environment=request.environment,
                 simulation_name="sim4validation",
+                run_name=request.run_name,
                 shp_zip=request.shp_zip,
                 min_long=request.min_long,
                 max_long=request.max_long,
@@ -336,6 +453,7 @@ class SimulationController:
                 padding_animation_frame=request.padding_animation_frame,
             )
         )
+        self._validate_environment_coverage(config, observed_context.manchas)
 
         selected_oil_types = self._load_oil_types(request.oil_types, request.oil_types_file)
         selected_oil_type = selected_oil_types[0] if selected_oil_types else None
@@ -379,10 +497,15 @@ class SimulationController:
             )
 
     def _run_fast_optimization_phase(
-        self, request: ValidationRunRequest, context: _ValidationContext
+        self,
+        request: ValidationRunRequest,
+        context: _ValidationContext,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> bool:
         if not request.optimize_wdf_stokes_cdf:
             return True
+        self._check_cancelled(should_cancel)
 
         if context.stokes_override is not None:
             print(f"Fixing stokes_drift to {context.stokes_override} for optimization.")
@@ -428,19 +551,24 @@ class SimulationController:
             f"Will test {len(cdf_values)} cdf x {len(hdiff_values)} hd "
             f"= {total_runs} simulations (fast; all WDFs per run, stokes fixed=False)."
         )
-        progress = _ProgressPrinter(total_runs, every=15, label="Progress")
-        best_row, results_df = self.optimize_wdf_stokes_current_drift_request(
-            FastOptimizationRequest(
-                manchas=context.real_manchas,
-                config=context.config,
-                observed_trajectory=context.observed_trajectory,
-                wdf_values=wdf_values,
-                current_drift_values=cdf_values,
-                horizontal_diffusivity_values=hdiff_values,
-                particles_per_wdf=request.fast_particles_per_wdf,
-                oil_type=context.selected_oil_type,
-                progress=progress,
-            )
+        progress = _ProgressPrinter(
+            total_runs,
+            every=15,
+            label="Progress",
+            on_tick=progress_callback,
+            should_cancel=should_cancel,
+        )
+        best_row, results_df = self.optimize_wdf_stokes_current_drift(
+            manchas=context.real_manchas,
+            config=context.config,
+            observed_trajectory=context.observed_trajectory,
+            wdf_values=wdf_values,
+            current_drift_values=cdf_values,
+            horizontal_diffusivity_values=hdiff_values,
+            particles_per_wdf=request.fast_particles_per_wdf,
+            oil_type=context.selected_oil_type,
+            progress=progress,
+            should_cancel=should_cancel,
         )
 
         results_name = "wdf_cdf_hd_optimization_fast"
@@ -489,9 +617,13 @@ class SimulationController:
         return True
 
     def _run_simulation_phase(
-        self, request: ValidationRunRequest, context: _ValidationContext
+        self,
+        request: ValidationRunRequest,
+        context: _ValidationContext,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> tuple[Path, Path]:
         print("Start simulation...")
+        self._check_cancelled(should_cancel)
         if (
             context.stokes_override is not None
             and not request.optimize_stokes
@@ -534,6 +666,7 @@ class SimulationController:
         self.workspace_repository.write_json(out_dir / f"{sim_filename}.json", run_params)
 
         if not request.skip_simulation:
+            self._check_cancelled(should_cancel)
             self.run_simulation_request(
                 SimulationRunRequest(
                     manchas=context.real_manchas,
@@ -557,8 +690,16 @@ class SimulationController:
         return out_dir / f"{sim_filename}.nc", out_dir
 
     def _run_visualization_phase(
-        self, context: _ValidationContext, sim_path: Path, out_dir: Path
-    ) -> None:
+        self,
+        context: _ValidationContext,
+        sim_path: Path,
+        out_dir: Path,
+        should_cancel: Optional[Callable[[], bool]] = None,
+        show_plots: bool = True,
+    ) -> tuple[Optional[Path], Optional[Path]]:
+        self._check_cancelled(should_cancel)
+        compare_gif: Optional[Path] = None
+        frames_dir: Optional[Path] = None
         if not context.skip_animation:
             compare_gif = out_dir / f"{sim_path.stem}_compare.gif"
             try:
@@ -577,11 +718,14 @@ class SimulationController:
                 print(f"Failed to generate comparison GIF: {exc}")
 
         if context.skip_plots:
-            return
+            return compare_gif, frames_dir
 
         ds_result = xr.open_dataset(sim_path, engine="netcdf4")
         snapshot_datetimes = list(context.observed_trajectory["time"])
+        frames_dir = out_dir / f"{sim_path.stem}_frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
         for dt_snapshot in snapshot_datetimes:
+            self._check_cancelled(should_cancel)
             sim_times = pd.to_datetime(ds_result["time"].values)
             idx_time = (abs(sim_times - dt_snapshot)).argmin()
             lons = ds_result["lon"].isel(time=idx_time).values
@@ -602,12 +746,50 @@ class SimulationController:
             plt.xlabel("Longitude")
             plt.ylabel("Latitude")
             plt.grid(True)
-            plt.show()
+            timestamp_label = pd.to_datetime(dt_snapshot).strftime("%Y%m%d_%H%M%S")
+            frame_file = frames_dir / f"step_{timestamp_label}.png"
+            plt.savefig(frame_file, dpi=150, bbox_inches="tight")
+            if show_plots:
+                plt.show()
+            plt.close()
+        return compare_gif, frames_dir
 
-    def run_validation(self, request: ValidationRunRequest):
+    def run_validation(
+        self,
+        request: ValidationRunRequest,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
+        show_plots: bool = True,
+    ) -> Optional[ValidationRunResult]:
+        self._check_cancelled(should_cancel)
         context = self._build_validation_context(request)
         self._validate_supported_flags(request)
-        if not self._run_fast_optimization_phase(request, context):
-            return
-        sim_path, out_dir = self._run_simulation_phase(request, context)
-        self._run_visualization_phase(context, sim_path, out_dir)
+        if not self._run_fast_optimization_phase(
+            request,
+            context,
+            progress_callback=progress_callback,
+            should_cancel=should_cancel,
+        ):
+            return None
+        sim_path, out_dir = self._run_simulation_phase(request, context, should_cancel=should_cancel)
+        compare_gif, frames_dir = self._run_visualization_phase(
+            context,
+            sim_path,
+            out_dir,
+            should_cancel=should_cancel,
+            show_plots=show_plots,
+        )
+        artifact_paths = tuple(sorted((path for path in out_dir.iterdir() if path.is_file()), key=lambda p: p.name))
+        return ValidationRunResult(
+            run_name=context.config.simulation.name,
+            out_dir=out_dir,
+            sim_path=sim_path,
+            wind_drift_factor=context.wind_drift_factor,
+            stokes_drift=context.stokes_drift,
+            current_drift_factor=context.current_drift_factor,
+            horizontal_diffusivity=context.horizontal_diffusivity,
+            oil_type=context.selected_oil_type,
+            comparison_gif=compare_gif,
+            frames_dir=frames_dir,
+            artifact_paths=artifact_paths,
+        )
