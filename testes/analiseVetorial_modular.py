@@ -7,14 +7,47 @@ import cartopy.crs as crt
 def load_data(file_nrt, file_my, datetime_str):
     # Loads NRT and MY datasets and selects the specified time instant
     # Args: file_nrt (NetCDF path), file_my (NetCDF path), datetime_str (ISO format)
-    # Returns: (nrt_dataset, my_dataset, nrt_slice, my_slice)
+    # Returns: (nrt_dataset, my_dataset, nrt_slice, my_slice, actual_time_nrt, actual_time_my)
     nrt = xr.open_dataset(file_nrt)
     my = xr.open_dataset(file_my)
     
+    # Select time using nearest method
     nrt_slice = nrt.sel(time=datetime_str, method="nearest")
     my_slice = my.sel(time=datetime_str, method="nearest")
     
-    return nrt, my, nrt_slice, my_slice
+    # Get actual selected times as strings
+    actual_time_nrt = str(nrt_slice.time.values).replace('T', ' ').split('.')[0]
+    actual_time_my = str(my_slice.time.values).replace('T', ' ').split('.')[0]
+    requested_time_str = datetime_str.replace('T', ' ')
+    
+    # Validation and warnings
+    print("\n" + "=" * 60)
+    print("VALIDAÇÃO DO TIMESTAMP SELECIONADO:")
+    print("=" * 60)
+    print(f"Timestamp solicitado: {requested_time_str}")
+    print(f"Timestamp NRT real:   {actual_time_nrt}")
+    print(f"Timestamp MY real:    {actual_time_my}")
+    
+    # Check if exact match (simple string comparison)
+    if actual_time_nrt.startswith(datetime_str.replace('T', ' ')):
+        print("✓ NRT: Timestamp EXATO (ou muito próximo) encontrado")
+    else:
+        print(f"⚠ NRT: Timestamp DIFERENTE do solicitado")
+    
+    if actual_time_my.startswith(datetime_str.replace('T', ' ')):
+        print("✓ MY:  Timestamp EXATO (ou muito próximo) encontrado")
+    else:
+        print(f"⚠ MY:  Timestamp DIFERENTE do solicitado")
+    
+    # Check if NRT and MY have same timestamp
+    if actual_time_nrt == actual_time_my:
+        print("✓ NRT e MY estão no MESMO timestamp")
+    else:
+        print(f"⚠ AVISO: NRT e MY têm timestamps DIFERENTES")
+    
+    print("=" * 60)
+    
+    return nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my
 
 
 def extract_components(slice_data):
@@ -200,11 +233,107 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     gl3.right_labels = False
     ax_diff.set_title('Diferença (NRT - MY)', fontsize=14, weight='bold')
     
-    plt.suptitle(f'Comparação de Correntes Oceânicas - Região Selecionada ({datetime_str.split("T")[0]})', 
+    # Format datetime for display (replace T with space)
+    datetime_display = datetime_str.replace("T", " ")
+    
+    plt.suptitle(f'Comparação de Correntes Oceânicas - Região Selecionada ({datetime_display})', 
                  fontsize=16, weight='bold')
     plt.tight_layout()
     
     return fig, axes
+
+def plot_histogramdif(diff_u, diff_v, u_my, v_my):
+    # Plots histograms for u, v component differences and vector magnitude difference
+    # Normalizes by maximum magnitude of MY vectors
+    # Args: diff_u, diff_v (difference arrays), u_my, v_my (MY velocity components)
+    # Returns: fig
+    
+    # Calculate magnitude of MY vectors
+    mag_my = np.sqrt(u_my.values**2 + v_my.values**2)
+    mag_my_max = float(np.nanmax(mag_my))
+    
+    print(f"\nMagnitude máxima dos vetores MY: {mag_my_max:.6f} m/s")
+    
+    # Flatten arrays -> To change a multidimensional array into a 1D array for histogram plotting
+    diff_u_flat = diff_u.values.flatten()
+    diff_v_flat = diff_v.values.flatten()
+    
+    # Normalize by maximum MY magnitude
+    diff_u_norm = diff_u_flat / mag_my_max
+    diff_v_norm = diff_v_flat / mag_my_max
+    
+    # Calculate vector magnitude difference (normalized)
+    mag_diff_norm = np.sqrt(diff_u_norm**2 + diff_v_norm**2)
+    
+    # Remove NaN values
+    diff_u_norm = diff_u_norm[~np.isnan(diff_u_norm)]
+    diff_v_norm = diff_v_norm[~np.isnan(diff_v_norm)]
+    mag_diff_norm = mag_diff_norm[~np.isnan(mag_diff_norm)]
+    
+    # Calculate optimal bins using Sturges' rule: k = ceil(log2(n) + 1)
+    n_points = len(mag_diff_norm)
+    n_bins = int(np.ceil(np.log2(n_points) + 1))
+    
+    print("\n" + "=" * 60)
+    print("INFORMAÇÕES DOS HISTOGRAMAS:")
+    print("=" * 60)
+    print(f"Número de pontos: {n_points}")
+    print(f"Número de bins (Regra de Sturges): {n_bins}")
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    
+    # Histogram diff_u (normalized)
+    counts_u, bins_u, patches_u = axes[0].hist(diff_u_norm, bins=n_bins, color='red', alpha=0.7, edgecolor='black')
+    axes[0].axvline(0, color='black', linestyle='--', linewidth=1)
+    axes[0].set_xlabel('Diferença u normalizada (adimensional)', fontsize=12)
+    axes[0].set_ylabel('Frequência', fontsize=12)
+    axes[0].set_title('Histograma Diferença u (Normalizada)', fontsize=14, weight='bold')
+    axes[0].grid(True, alpha=0.3)
+    
+    # Print bin edges for diff_u
+    print("\nBins Diferença u:")
+    for i in range(len(bins_u) - 1):
+        if i == len(bins_u) - 2:  # Last bin is inclusive on both sides
+            print(f"  Bin {i+1}: [{bins_u[i]:.6f}, {bins_u[i+1]:.6f}] → {int(counts_u[i])} valores")
+        else:
+            print(f"  Bin {i+1}: [{bins_u[i]:.6f}, {bins_u[i+1]:.6f}) → {int(counts_u[i])} valores")
+    
+    # Histogram diff_v (normalized)
+    counts_v, bins_v, patches_v = axes[1].hist(diff_v_norm, bins=n_bins, color='blue', alpha=0.7, edgecolor='black')
+    axes[1].axvline(0, color='black', linestyle='--', linewidth=1)
+    axes[1].set_xlabel('Diferença v normalizada (adimensional)', fontsize=12)
+    axes[1].set_ylabel('Frequência', fontsize=12)
+    axes[1].set_title('Histograma Diferença v (Normalizada)', fontsize=14, weight='bold')
+    axes[1].grid(True, alpha=0.3)
+    
+    # Print bin edges for diff_v
+    print("\nBins Diferença v:")
+    for i in range(len(bins_v) - 1):
+        if i == len(bins_v) - 2:  # Last bin is inclusive on both sides
+            print(f"  Bin {i+1}: [{bins_v[i]:.6f}, {bins_v[i+1]:.6f}] → {int(counts_v[i])} valores")
+        else:
+            print(f"  Bin {i+1}: [{bins_v[i]:.6f}, {bins_v[i+1]:.6f}) → {int(counts_v[i])} valores")
+    
+    # Histogram vector magnitude (normalized)
+    counts_mag, bins_mag, patches_mag = axes[2].hist(mag_diff_norm, bins=n_bins, color='green', alpha=0.7, edgecolor='black')
+    axes[2].set_xlabel('Magnitude da Diferença Normalizada (adimensional)', fontsize=12)
+    axes[2].set_ylabel('Frequência', fontsize=12)
+    axes[2].set_title('Histograma Erro Vetorial (Normalizado)', fontsize=14, weight='bold')
+    axes[2].grid(True, alpha=0.3)
+    
+    # Print bin edges for magnitude
+    print("\nBins Magnitude Vetorial:")
+    for i in range(len(bins_mag) - 1):
+        if i == len(bins_mag) - 2:  # Last bin is inclusive on both sides
+            print(f"  Bin {i+1}: [{bins_mag[i]:.6f}, {bins_mag[i+1]:.6f}] → {int(counts_mag[i])} valores")
+        else:
+            print(f"  Bin {i+1}: [{bins_mag[i]:.6f}, {bins_mag[i+1]:.6f}) → {int(counts_mag[i])} valores")
+    print("=" * 60)
+    
+    plt.suptitle(f'Distribuição dos Erros Normalizados (NRT - MY) | Norm: mag_MY_max = {mag_my_max:.4f} m/s', fontsize=16, weight='bold')
+    plt.tight_layout()
+    
+    return fig
 
 
 def print_information(nrt_dataset, metrics):
@@ -244,14 +373,26 @@ def main():
     # Input parameters
     file_nrt = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaNRT.nc'
     file_my = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaMY.nc'
-    datetime_str = "2023-01-01T12:00:00"
+    datetime_str = "2025-04-05T08:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
     
     # 1. Load data
     print("Carregando dados...")
-    nrt, my, nrt_slice, my_slice = load_data(file_nrt, file_my, datetime_str)
+    nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my = load_data(file_nrt, file_my, datetime_str)
+    
+    # Display available timesteps
+    print("\n" + "=" * 60)
+    print("TIMESTEPS DISPONÍVEIS NO ARQUIVO NRT:")
+    print("=" * 60)
+    print(f"Total de timesteps: {len(nrt.time.values)}")
+    print("\nLista de datas/horas:")
+    for i, time in enumerate(nrt.time.values):
+        time_str = str(time).replace('T', ' ').split('.')[0]  # Format: YYYY-MM-DD HH:MM:SS
+        print(f"  {i+1:3d}. {time_str}")
+    print("=" * 60)
+    print(f"\nTimestep selecionado para análise: {datetime_str.replace('T', ' ')}\n")
     
     # 2. Extract components
     u, v, lon, lat = extract_components(nrt_slice)
@@ -296,8 +437,10 @@ def main():
     # 9. Print information
     print_information(nrt, metrics)
     
+    # 10. Plot histograms
+    fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
+    
     plt.show()
-
 
 if __name__ == "__main__":
     main()
