@@ -29,24 +29,11 @@ def load_data(file_nrt, file_my, datetime_str):
     print(f"Timestamp NRT real:   {actual_time_nrt}")
     print(f"Timestamp MY real:    {actual_time_my}")
     
-    # Check if exact match (simple string comparison)
-    if actual_time_nrt.startswith(datetime_str.replace('T', ' ')):
-        print("✓ NRT: Timestamp EXATO (ou muito próximo) encontrado")
-    else:
-        print(f"⚠ NRT: Timestamp DIFERENTE do solicitado")
-    
-    if actual_time_my.startswith(datetime_str.replace('T', ' ')):
-        print("✓ MY:  Timestamp EXATO (ou muito próximo) encontrado")
-    else:
-        print(f"⚠ MY:  Timestamp DIFERENTE do solicitado")
-    
     # Check if NRT and MY have same timestamp
     if actual_time_nrt == actual_time_my:
-        print("✓ NRT e MY estão no MESMO timestamp")
+        print("NRT e MY estão no MESMO timestamp")
     else:
-        print(f"⚠ AVISO: NRT e MY têm timestamps DIFERENTES")
-    
-    print("=" * 60)
+        print(f"AVISO: NRT e MY têm timestamps DIFERENTES")
     
     return nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my
 
@@ -62,13 +49,18 @@ def extract_components(slice_data):
     
     return u, v, lon, lat
 
-
+"""
 def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_max_req, n_expand=3):
     # Calculates indices for spatial crop based on center and expansion
     # Args: lat, lon (dataset coordinates), lat/lon_min/max_req (requested limits), n_expand (extra points, default: 3)
     # Returns: (lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max)
     lat_center = (lat_min_req + lat_max_req) / 2
     lon_center = (lon_min_req + lon_max_req) / 2
+
+    print(f"Debug: {lat.values}" )
+    print(f"Debug 3:  {lon.values}" )
+    print(f"Debug 2:  {lat.values.shape}" )
+
     
     lat_center_idx = np.argmin(np.abs(lat.values - lat_center))
     lon_center_idx = np.argmin(np.abs(lon.values - lon_center))
@@ -87,6 +79,62 @@ def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_
     lon_max = lon.values[lon_max_idx]
     
     return lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max
+"""
+
+def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_max_req, n_expand=3):
+    # Calculates indices for spatial crop based on requested bounds and expansion
+    # Args: lat, lon (dataset coordinates), lat/lon_min/max_req (requested limits), n_expand (extra points, default: 3)
+    # Returns: (lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max)
+
+    lat_vals = lat.values
+    lon_vals = lon.values
+
+    # Normalize requested bounds
+    lat_lo, lat_hi = (lat_min_req, lat_max_req) if lat_min_req <= lat_max_req else (lat_max_req, lat_min_req)
+    lon_lo, lon_hi = (lon_min_req, lon_max_req) if lon_min_req <= lon_max_req else (lon_max_req, lon_min_req)
+
+    # Build mask of points inside requested bounds
+    lat_mask = (lat_vals >= lat_lo) & (lat_vals <= lat_hi)
+    lon_mask = (lon_vals >= lon_lo) & (lon_vals <= lon_hi)
+
+    print(f"Debug 1: {np.where(lat_mask)[0]}")
+
+    if lat_mask.any():
+        lat_in = np.where(lat_mask)[0]
+        lat_min_idx = max(0, lat_in.min() - n_expand)
+        lat_max_idx = min(len(lat_vals) - 1, lat_in.max() + n_expand)
+    else:
+        # fallback: nearest points to requested bounds
+        lat_min_idx = int(np.argmin(np.abs(lat_vals - lat_lo)))
+        lat_max_idx = int(np.argmin(np.abs(lat_vals - lat_hi)))
+        if lat_min_idx > lat_max_idx:
+            lat_min_idx, lat_max_idx = lat_max_idx, lat_min_idx
+        lat_min_idx = max(0, lat_min_idx - n_expand)
+        lat_max_idx = min(len(lat_vals) - 1, lat_max_idx + n_expand)
+
+    if lon_mask.any():
+        lon_in = np.where(lon_mask)[0]
+        lon_min_idx = max(0, lon_in.min() - n_expand)
+        lon_max_idx = min(len(lon_vals) - 1, lon_in.max() + n_expand)
+    else:
+        # fallback: nearest points to requested bounds
+        lon_min_idx = int(np.argmin(np.abs(lon_vals - lon_lo)))
+        lon_max_idx = int(np.argmin(np.abs(lon_vals - lon_hi)))
+        if lon_min_idx > lon_max_idx:
+            lon_min_idx, lon_max_idx = lon_max_idx, lon_min_idx
+        lon_min_idx = max(0, lon_min_idx - n_expand)
+        lon_max_idx = min(len(lon_vals) - 1, lon_max_idx + n_expand)
+
+    lat_indices = np.arange(lat_min_idx, lat_max_idx + 1)
+    lon_indices = np.arange(lon_min_idx, lon_max_idx + 1)
+
+    lat_min = lat_vals[lat_min_idx]
+    lat_max = lat_vals[lat_max_idx]
+    lon_min = lon_vals[lon_min_idx]
+    lon_max = lon_vals[lon_max_idx]
+
+    return lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max
+
 
 
 def apply_crop(u, v, lat, lon, lat_indices, lon_indices):
@@ -318,8 +366,6 @@ def analyze_error_distribution(diff_u, diff_v):
     print(f"  Top 5 valores mais frequentes em u:")
     for val, count in top_values_u:
         print(f"    {val:.8f}: {count} vezes")
-    
-    print("=" * 60)
 
 def analyze_gaussian_fit(diff_u, diff_v):
     # Analyzes if error distribution follows a Gaussian (normal) distribution
@@ -414,12 +460,16 @@ def analyze_gaussian_fit(diff_u, diff_v):
     
     # Q-Q plot for u
     stats.probplot(diff_u_flat, dist="norm", plot=axes_qq[0])
-    axes_qq[0].set_title('Componente U')
+    axes_qq[0].set_title('Componente U', fontsize=12, weight='bold')
+    axes_qq[0].set_xlabel('Quantis Teóricos Gaussianos\n(valores esperados em gaussiana padrão)', fontsize=10)
+    axes_qq[0].set_ylabel('Quantis Empíricos dos Dados\n(valores observados ordenados)', fontsize=10)
     axes_qq[0].grid(True, alpha=0.3)
     
     # Q-Q plot for v
     stats.probplot(diff_v_flat, dist="norm", plot=axes_qq[1])
-    axes_qq[1].set_title('Componente V')
+    axes_qq[1].set_title('Componente V', fontsize=12, weight='bold')
+    axes_qq[1].set_xlabel('Quantis Teóricos Gaussianos\n(valores esperados em gaussiana padrão)', fontsize=10)
+    axes_qq[1].set_ylabel('Quantis Empíricos dos Dados\n(valores observados ordenados)', fontsize=10)
     axes_qq[1].grid(True, alpha=0.3)
     
     plt.tight_layout()
@@ -524,11 +574,13 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
 def print_information(nrt_dataset, metrics):
     # Prints dataset information and calculated metrics
     # Args: nrt_dataset (original NRT dataset), metrics (dict with calculated metrics)
+    
+
     print("=" * 60)
     print("INFORMAÇÕES DO ARQUIVO: dadoVelocidadeAguaNRT.nc")
     print("=" * 60)
     print("\nDIMENSÕES:")
-    print(nrt_dataset.dims)
+    print(nrt_dataset.sizes)
     print("\nVARIÁVEIS:")
     for var in nrt_dataset.data_vars:
         print(f"  - {var}: {nrt_dataset[var].dims} | Shape: {nrt_dataset[var].shape}")
@@ -549,16 +601,13 @@ def print_information(nrt_dataset, metrics):
     print(f"  - Erro médio vetorial: {metrics['mean_vector_error']:.6f} m/s")
     print(f"  - Erro máximo vetorial: {metrics['max_vector_error']:.6f} m/s")
 
-    print("=" * 60)
-
-
 def main():
     # Main function - executes complete analysis
     
     # Input parameters
     file_nrt = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaNRT.nc'
     file_my = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaMY.nc'
-    datetime_str = "2025-04-05T20:00:00"
+    datetime_str = "2025-04-05T12:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
@@ -613,7 +662,6 @@ def main():
     metrics = calculate_metrics(u, v, u_my_aligned, v_my_aligned)
     
     # 8. Plot
-    print("\nGerando gráficos...")
     fig, axes = plot_comparison(u, v, u_my_aligned, v_my_aligned,
                                    metrics['diff_u'], metrics['diff_v'],
                                    lon, lat, lon_min, lon_max, lat_min, lat_max,
