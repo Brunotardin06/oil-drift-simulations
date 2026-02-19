@@ -3,12 +3,17 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
+import matplotlib
 import numpy as np
 import pandas as pd
 import xarray as xr
 from opendrift.models.openoil import OpenOil
 from shapely.geometry import Point
+
+# Force a non-interactive backend to avoid Tkinter teardown errors when
+# matplotlib figures are created from worker threads (e.g., Flet execution).
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from src.application.dto import (
     ConfigRequest,
