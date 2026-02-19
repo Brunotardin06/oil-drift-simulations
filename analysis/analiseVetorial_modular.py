@@ -4,7 +4,6 @@ import xarray as xr
 import cartopy.crs as crt
 from scipy import stats
 import os
-import sys
 
 
 def load_data(file_nrt, file_my, datetime_str):

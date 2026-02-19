@@ -38,5 +38,4 @@ psutil
 flet
 opendrift
 os
-sys
 matplotlib
