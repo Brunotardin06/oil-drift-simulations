@@ -287,6 +287,7 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     datetime_display = datetime_str.replace("T", " ")
     
     plt.suptitle(f'Comparação de Correntes Oceânicas - Região Selecionada ({datetime_display})', 
+    plt.suptitle(f'Comparação dos Ventos - Região Selecionada ({datetime_display})', 
                  fontsize=16, weight='bold')
     plt.tight_layout()
     
@@ -586,7 +587,7 @@ def print_information(nrt_dataset, metrics):
     
 
     print("=" * 60)
-    print("INFORMAÇÕES DO ARQUIVO: dadoVelocidadeAguaNRT.nc")
+    print("INFORMAÇÕES DO ARQUIVO: dadoVelocidadeVentoNRT.nc")
     print("=" * 60)
     print("\nDIMENSÕES:")
     print(nrt_dataset.sizes)
@@ -614,8 +615,8 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = get_data_path('dadoVelocidadeAguaNRT.nc')
-    file_my = get_data_path('dadoVelocidadeAguaMY.nc')
+    file_nrt = get_data_path('dadoVelocidadeVentoNRT.nc')
+    file_my = get_data_path('dadoVelocidadeVentoMY.nc')
     datetime_str = "2025-04-05T12:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
