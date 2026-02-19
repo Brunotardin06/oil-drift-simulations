@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 import cartopy.crs as crt
+from scipy import stats
 
 
 def load_data(file_nrt, file_my, datetime_str):
@@ -28,24 +29,11 @@ def load_data(file_nrt, file_my, datetime_str):
     print(f"Timestamp NRT real:   {actual_time_nrt}")
     print(f"Timestamp MY real:    {actual_time_my}")
     
-    # Check if exact match (simple string comparison)
-    if actual_time_nrt.startswith(datetime_str.replace('T', ' ')):
-        print("✓ NRT: Timestamp EXATO (ou muito próximo) encontrado")
-    else:
-        print(f"⚠ NRT: Timestamp DIFERENTE do solicitado")
-    
-    if actual_time_my.startswith(datetime_str.replace('T', ' ')):
-        print("✓ MY:  Timestamp EXATO (ou muito próximo) encontrado")
-    else:
-        print(f"⚠ MY:  Timestamp DIFERENTE do solicitado")
-    
     # Check if NRT and MY have same timestamp
     if actual_time_nrt == actual_time_my:
-        print("✓ NRT e MY estão no MESMO timestamp")
+        print("NRT e MY estão no MESMO timestamp")
     else:
-        print(f"⚠ AVISO: NRT e MY têm timestamps DIFERENTES")
-    
-    print("=" * 60)
+        print(f"AVISO: NRT e MY têm timestamps DIFERENTES")
     
     return nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my
 
@@ -61,13 +49,18 @@ def extract_components(slice_data):
     
     return u, v, lon, lat
 
-
+"""
 def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_max_req, n_expand=3):
     # Calculates indices for spatial crop based on center and expansion
     # Args: lat, lon (dataset coordinates), lat/lon_min/max_req (requested limits), n_expand (extra points, default: 3)
     # Returns: (lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max)
     lat_center = (lat_min_req + lat_max_req) / 2
     lon_center = (lon_min_req + lon_max_req) / 2
+
+    print(f"Debug: {lat.values}" )
+    print(f"Debug 3:  {lon.values}" )
+    print(f"Debug 2:  {lat.values.shape}" )
+
     
     lat_center_idx = np.argmin(np.abs(lat.values - lat_center))
     lon_center_idx = np.argmin(np.abs(lon.values - lon_center))
@@ -86,6 +79,62 @@ def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_
     lon_max = lon.values[lon_max_idx]
     
     return lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max
+"""
+
+def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_max_req, n_expand=3):
+    # Calculates indices for spatial crop based on requested bounds and expansion
+    # Args: lat, lon (dataset coordinates), lat/lon_min/max_req (requested limits), n_expand (extra points, default: 3)
+    # Returns: (lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max)
+
+    lat_vals = lat.values
+    lon_vals = lon.values
+
+    # Normalize requested bounds
+    lat_lo, lat_hi = (lat_min_req, lat_max_req) if lat_min_req <= lat_max_req else (lat_max_req, lat_min_req)
+    lon_lo, lon_hi = (lon_min_req, lon_max_req) if lon_min_req <= lon_max_req else (lon_max_req, lon_min_req)
+
+    # Build mask of points inside requested bounds
+    lat_mask = (lat_vals >= lat_lo) & (lat_vals <= lat_hi)
+    lon_mask = (lon_vals >= lon_lo) & (lon_vals <= lon_hi)
+
+    print(f"Debug 1: {np.where(lat_mask)[0]}")
+
+    if lat_mask.any():
+        lat_in = np.where(lat_mask)[0]
+        lat_min_idx = max(0, lat_in.min() - n_expand)
+        lat_max_idx = min(len(lat_vals) - 1, lat_in.max() + n_expand)
+    else:
+        # fallback: nearest points to requested bounds
+        lat_min_idx = int(np.argmin(np.abs(lat_vals - lat_lo)))
+        lat_max_idx = int(np.argmin(np.abs(lat_vals - lat_hi)))
+        if lat_min_idx > lat_max_idx:
+            lat_min_idx, lat_max_idx = lat_max_idx, lat_min_idx
+        lat_min_idx = max(0, lat_min_idx - n_expand)
+        lat_max_idx = min(len(lat_vals) - 1, lat_max_idx + n_expand)
+
+    if lon_mask.any():
+        lon_in = np.where(lon_mask)[0]
+        lon_min_idx = max(0, lon_in.min() - n_expand)
+        lon_max_idx = min(len(lon_vals) - 1, lon_in.max() + n_expand)
+    else:
+        # fallback: nearest points to requested bounds
+        lon_min_idx = int(np.argmin(np.abs(lon_vals - lon_lo)))
+        lon_max_idx = int(np.argmin(np.abs(lon_vals - lon_hi)))
+        if lon_min_idx > lon_max_idx:
+            lon_min_idx, lon_max_idx = lon_max_idx, lon_min_idx
+        lon_min_idx = max(0, lon_min_idx - n_expand)
+        lon_max_idx = min(len(lon_vals) - 1, lon_max_idx + n_expand)
+
+    lat_indices = np.arange(lat_min_idx, lat_max_idx + 1)
+    lon_indices = np.arange(lon_min_idx, lon_max_idx + 1)
+
+    lat_min = lat_vals[lat_min_idx]
+    lat_max = lat_vals[lat_max_idx]
+    lon_min = lon_vals[lon_min_idx]
+    lon_max = lon_vals[lon_max_idx]
+
+    return lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max
+
 
 
 def apply_crop(u, v, lat, lon, lat_indices, lon_indices):
@@ -242,6 +291,195 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     
     return fig, axes
 
+def analyze_error_distribution(diff_u, diff_v):
+    # Analyzes error distribution to explain bin frequency patterns
+    # Args: diff_u, diff_v (difference arrays)
+    # Returns: None (prints analysis)
+    from scipy import stats
+    
+    # Flatten and remove NaN
+    diff_u_flat = diff_u.values.flatten()
+    diff_v_flat = diff_v.values.flatten()
+    diff_u_flat = diff_u_flat[~np.isnan(diff_u_flat)]
+    diff_v_flat = diff_v_flat[~np.isnan(diff_v_flat)]
+    
+    print("\n" + "=" * 60)
+    print("ANÁLISE DA DISTRIBUIÇÃO DE ERROS:")
+    print("=" * 60)
+    
+    # 1. Simetria
+    print("\n1. SIMETRIA DOS DADOS:")
+    skew_u = stats.skew(diff_u_flat)
+    skew_v = stats.skew(diff_v_flat)
+    print(f"  Assimetria (Skewness) u: {skew_u:.6f}")
+    print(f"  Assimetria (Skewness) v: {skew_v:.6f}")
+    if abs(skew_u) < 0.5:
+        print(f"    → u é aproximadamente SIMÉTRICO")
+    elif skew_u > 0:
+        print(f"    → u tem ASSIMETRIA POSITIVA (cauda direita)")
+    else:
+        print(f"    → u tem ASSIMETRIA NEGATIVA (cauda esquerda)")
+    
+    # 2. Curtose
+    print("\n2. CURTOSE (CONCENTRAÇÃO NOS EXTREMOS):")
+    kurt_u = stats.kurtosis(diff_u_flat)
+    kurt_v = stats.kurtosis(diff_v_flat)
+    print(f"  Curtose u: {kurt_u:.6f}")
+    print(f"  Curtose v: {kurt_v:.6f}")
+    if abs(kurt_u) < 0.5:
+        print(f"    → u segue distribuição similar à GAUSSIANA")
+    elif kurt_u > 0:
+        print(f"    → u tem PICOS ACENTUADOS (leptocúrtica)")
+    else:
+        print(f"    → u é mais ACHATADA (platicúrtica)")
+    
+    # 3. Correlação
+    print("\n3. CORRELAÇÃO ENTRE u E v:")
+    corr = np.corrcoef(diff_u_flat, diff_v_flat)[0, 1]
+    print(f"  Correlação de Pearson: {corr:.6f}")
+    if abs(corr) < 0.3:
+        print(f"    → u e v são INDEPENDENTES")
+    elif abs(corr) < 0.7:
+        print(f"    → u e v têm CORRELAÇÃO MODERADA")
+    else:
+        print(f"    → u e v são ALTAMENTE CORRELACIONADOS")
+    
+    # 4. Valores Únicos
+    print("\n4. PRECISÃO NUMÉRICA:")
+    unique_u = len(np.unique(diff_u_flat))
+    unique_v = len(np.unique(diff_v_flat))
+    print(f"  Valores únicos em u: {unique_u} de {len(diff_u_flat)} (densidade: {unique_u/len(diff_u_flat):.2%})")
+    print(f"  Valores únicos em v: {unique_v} de {len(diff_v_flat)} (densidade: {unique_v/len(diff_v_flat):.2%})")
+    if unique_u < len(diff_u_flat) * 0.5:
+        print(f"    → u tem VALORES REPETIDOS (arredondamento?)")
+    if unique_v < len(diff_v_flat) * 0.5:
+        print(f"    → v tem VALORES REPETIDOS (arredondamento?)")
+    
+    # 5. Distribuição de Valores
+    print("\n5. DISTRIBUIÇÃO DE FREQUÊNCIA DE VALORES:")
+    value_counts_u = {}
+    for val in diff_u_flat:
+        val_round = round(val, 8)
+        value_counts_u[val_round] = value_counts_u.get(val_round, 0) + 1
+    
+    top_values_u = sorted(value_counts_u.items(), key=lambda x: x[1], reverse=True)[:5]
+    print(f"  Top 5 valores mais frequentes em u:")
+    for val, count in top_values_u:
+        print(f"    {val:.8f}: {count} vezes")
+
+def analyze_gaussian_fit(diff_u, diff_v):
+    # Analyzes if error distribution follows a Gaussian (normal) distribution
+    # Performs normality tests and displays ideal Gaussian parameters
+    # Args: diff_u, diff_v (difference arrays)
+    # Returns: None (prints analysis and generates Q-Q plots)
+    
+    # Flatten and remove NaN
+    diff_u_flat = diff_u.values.flatten()
+    diff_v_flat = diff_v.values.flatten()
+    diff_u_flat = diff_u_flat[~np.isnan(diff_u_flat)]
+    diff_v_flat = diff_v_flat[~np.isnan(diff_v_flat)]
+    
+    print("\n" + "=" * 60)
+    print("ANÁLISE DE DISTRIBUIÇÃO GAUSSIANA:")
+    print("=" * 60)
+    
+    # Calculate ideal Gaussian parameters
+    print("\n1. PARÂMETROS IDEAIS PARA DISTRIBUIÇÃO GAUSSIANA:")
+    
+    # For u component
+    mean_u = np.mean(diff_u_flat)
+    std_u = np.std(diff_u_flat)
+    print(f"\n  Componente U (diferença):")
+    print(f"    # Média ideal (μ):       {mean_u:.8f}")
+    print(f"    # Desvio padrão ideal (σ): {std_u:.8f}")
+    print(f"    # Variância ideal (σ²):  {std_u**2:.8f}")
+    
+    # For v component
+    mean_v = np.mean(diff_v_flat)
+    std_v = np.std(diff_v_flat)
+    print(f"\n  Componente V (diferença):")
+    print(f"    # Média ideal (μ):       {mean_v:.8f}")
+    print(f"    # Desvio padrão ideal (σ): {std_v:.8f}")
+    print(f"    # Variância ideal (σ²):  {std_v**2:.8f}")
+    
+    # Shapiro-Wilk Test (best for n < 50)
+    print("\n2. TESTE DE SHAPIRO-WILK (normalidade):")
+    print("   H0: A distribuição é GAUSSIANA")
+    print("   P-value > 0.05 → Não rejeita H0 (é gaussiana)")
+    print("   P-value ≤ 0.05 → Rejeita H0 (NÃO é gaussiana)")
+    
+    stat_u_sw, p_u_sw = stats.shapiro(diff_u_flat)
+    stat_v_sw, p_v_sw = stats.shapiro(diff_v_flat)
+    
+    print(f"\n  Componente U:")
+    print(f"    Estatística: {stat_u_sw:.6f}")
+    print(f"    P-value:    {p_u_sw:.6f}", end="")
+    if p_u_sw > 0.05:
+        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
+    else:
+        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    
+    print(f"\n  Componente V:")
+    print(f"    Estatística: {stat_v_sw:.6f}")
+    print(f"    P-value:    {p_v_sw:.6f}", end="")
+    if p_v_sw > 0.05:
+        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
+    else:
+        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    
+    # Jarque-Bera Test (uses Skewness and Kurtosis)
+    print("\n3. TESTE DE JARQUE-BERA (Skewness + Kurtosis):")
+    print("   H0: A distribuição é GAUSSIANA")
+    print("   P-value > 0.05 → Não rejeita H0 (é gaussiana)")
+    print("   P-value ≤ 0.05 → Rejeita H0 (NÃO é gaussiana)")
+    
+    stat_u_jb, p_u_jb = stats.jarque_bera(diff_u_flat)
+    stat_v_jb, p_v_jb = stats.jarque_bera(diff_v_flat)
+    
+    print(f"\n  Componente U:")
+    print(f"    Estatística: {stat_u_jb:.6f}")
+    print(f"    P-value:    {p_u_jb:.6f}", end="")
+    if p_u_jb > 0.05:
+        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
+    else:
+        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    
+    print(f"\n  Componente V:")
+    print(f"    Estatística: {stat_v_jb:.6f}")
+    print(f"    P-value:    {p_v_jb:.6f}", end="")
+    if p_v_jb > 0.05:
+        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
+    else:
+        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    
+    # Generate Q-Q plots
+    print("\n4. GERANDO Q-Q PLOTS (comparação visual com gaussiana)...")
+    
+    fig_qq, axes_qq = plt.subplots(1, 2, figsize=(12, 4.5))
+    fig_qq.suptitle('Q-Q Plot: Comparação com Distribuição Gaussiana', fontsize=14, weight='bold')
+    
+    # Q-Q plot for u
+    stats.probplot(diff_u_flat, dist="norm", plot=axes_qq[0])
+    axes_qq[0].set_title('Componente U', fontsize=12, weight='bold')
+    axes_qq[0].set_xlabel('Quantis Teóricos Gaussianos\n(valores esperados em gaussiana padrão)', fontsize=10)
+    axes_qq[0].set_ylabel('Quantis Empíricos dos Dados\n(valores observados ordenados)', fontsize=10)
+    axes_qq[0].grid(True, alpha=0.3)
+    
+    # Q-Q plot for v
+    stats.probplot(diff_v_flat, dist="norm", plot=axes_qq[1])
+    axes_qq[1].set_title('Componente V', fontsize=12, weight='bold')
+    axes_qq[1].set_xlabel('Quantis Teóricos Gaussianos\n(valores esperados em gaussiana padrão)', fontsize=10)
+    axes_qq[1].set_ylabel('Quantis Empíricos dos Dados\n(valores observados ordenados)', fontsize=10)
+    axes_qq[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    print("    ✓ Q-Q plots gerados")
+    print("    Nota: Pontos próximos à linha diagonal indicam distribuição gaussiana")
+    print("=" * 60)
+    
+    return fig_qq
+
 def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     # Plots histograms for u, v component differences and vector magnitude difference
     # Normalizes by maximum magnitude of MY vectors
@@ -292,11 +530,10 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     
     # Print bin edges for diff_u
     print("\nBins Diferença u:")
-    for i in range(len(bins_u) - 1):
-        if i == len(bins_u) - 2:  # Last bin is inclusive on both sides
-            print(f"  Bin {i+1}: [{bins_u[i]:.6f}, {bins_u[i+1]:.6f}] → {int(counts_u[i])} valores")
-        else:
-            print(f"  Bin {i+1}: [{bins_u[i]:.6f}, {bins_u[i+1]:.6f}) → {int(counts_u[i])} valores")
+    for i in range(len(counts_u)):
+        left_bracket = "["
+        right_bracket = "]" if i == len(counts_u) - 1 else ")"
+        print(f"  Bin {i+1}: {left_bracket}{bins_u[i]:.6f}, {bins_u[i+1]:.6f}{right_bracket} → {int(counts_u[i])} valores")
     
     # Histogram diff_v (normalized)
     counts_v, bins_v, patches_v = axes[1].hist(diff_v_norm, bins=n_bins, color='blue', alpha=0.7, edgecolor='black')
@@ -308,11 +545,10 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     
     # Print bin edges for diff_v
     print("\nBins Diferença v:")
-    for i in range(len(bins_v) - 1):
-        if i == len(bins_v) - 2:  # Last bin is inclusive on both sides
-            print(f"  Bin {i+1}: [{bins_v[i]:.6f}, {bins_v[i+1]:.6f}] → {int(counts_v[i])} valores")
-        else:
-            print(f"  Bin {i+1}: [{bins_v[i]:.6f}, {bins_v[i+1]:.6f}) → {int(counts_v[i])} valores")
+    for i in range(len(counts_v)):
+        left_bracket = "["
+        right_bracket = "]" if i == len(counts_v) - 1 else ")"
+        print(f"  Bin {i+1}: {left_bracket}{bins_v[i]:.6f}, {bins_v[i+1]:.6f}{right_bracket} → {int(counts_v[i])} valores")
     
     # Histogram vector magnitude (normalized)
     counts_mag, bins_mag, patches_mag = axes[2].hist(mag_diff_norm, bins=n_bins, color='green', alpha=0.7, edgecolor='black')
@@ -323,11 +559,10 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     
     # Print bin edges for magnitude
     print("\nBins Magnitude Vetorial:")
-    for i in range(len(bins_mag) - 1):
-        if i == len(bins_mag) - 2:  # Last bin is inclusive on both sides
-            print(f"  Bin {i+1}: [{bins_mag[i]:.6f}, {bins_mag[i+1]:.6f}] → {int(counts_mag[i])} valores")
-        else:
-            print(f"  Bin {i+1}: [{bins_mag[i]:.6f}, {bins_mag[i+1]:.6f}) → {int(counts_mag[i])} valores")
+    for i in range(len(counts_mag)):
+        left_bracket = "["
+        right_bracket = "]" if i == len(counts_mag) - 1 else ")"
+        print(f"  Bin {i+1}: {left_bracket}{bins_mag[i]:.6f}, {bins_mag[i+1]:.6f}{right_bracket} → {int(counts_mag[i])} valores")
     print("=" * 60)
     
     plt.suptitle(f'Distribuição dos Erros Normalizados (NRT - MY) | Norm: mag_MY_max = {mag_my_max:.4f} m/s', fontsize=16, weight='bold')
@@ -339,11 +574,13 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
 def print_information(nrt_dataset, metrics):
     # Prints dataset information and calculated metrics
     # Args: nrt_dataset (original NRT dataset), metrics (dict with calculated metrics)
+    
+
     print("=" * 60)
     print("INFORMAÇÕES DO ARQUIVO: dadoVelocidadeAguaNRT.nc")
     print("=" * 60)
     print("\nDIMENSÕES:")
-    print(nrt_dataset.dims)
+    print(nrt_dataset.sizes)
     print("\nVARIÁVEIS:")
     for var in nrt_dataset.data_vars:
         print(f"  - {var}: {nrt_dataset[var].dims} | Shape: {nrt_dataset[var].shape}")
@@ -364,16 +601,13 @@ def print_information(nrt_dataset, metrics):
     print(f"  - Erro médio vetorial: {metrics['mean_vector_error']:.6f} m/s")
     print(f"  - Erro máximo vetorial: {metrics['max_vector_error']:.6f} m/s")
 
-    print("=" * 60)
-
-
 def main():
     # Main function - executes complete analysis
     
     # Input parameters
     file_nrt = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaNRT.nc'
     file_my = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaMY.nc'
-    datetime_str = "2025-04-05T08:00:00"
+    datetime_str = "2025-04-05T12:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
@@ -428,7 +662,6 @@ def main():
     metrics = calculate_metrics(u, v, u_my_aligned, v_my_aligned)
     
     # 8. Plot
-    print("\nGerando gráficos...")
     fig, axes = plot_comparison(u, v, u_my_aligned, v_my_aligned,
                                    metrics['diff_u'], metrics['diff_v'],
                                    lon, lat, lon_min, lon_max, lat_min, lat_max,
@@ -436,6 +669,12 @@ def main():
     
     # 9. Print information
     print_information(nrt, metrics)
+    
+    # 9.5. Analyze error distribution
+    analyze_error_distribution(metrics['diff_u'], metrics['diff_v'])
+    
+    # 9.6. Analyze Gaussian fit
+    fig_qq = analyze_gaussian_fit(metrics['diff_u'], metrics['diff_v'])
     
     # 10. Plot histograms
     fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
