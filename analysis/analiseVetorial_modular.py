@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import xarray as xr
 import cartopy.crs as crt
 from scipy import stats
+import os
+import sys
 
 
 def load_data(file_nrt, file_my, datetime_str):
@@ -571,6 +573,14 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     return fig
 
 
+def get_data_path(filename):
+    # Builds a path relative to the script directory
+    # Args: filename (str) - name of the file in the analysis directory
+    # Returns: absolute path to the file
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_path = os.path.join(script_dir, filename)
+    return data_path
+
 def print_information(nrt_dataset, metrics):
     # Prints dataset information and calculated metrics
     # Args: nrt_dataset (original NRT dataset), metrics (dict with calculated metrics)
@@ -605,15 +615,16 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaNRT.nc'
-    file_my = 'C:\\Users\\prmorais\\Desktop\\DerivaTardin\\DigitalTwin-TECGRAF-PETROBRAS\\testes\\dadoVelocidadeAguaMY.nc'
+    file_nrt = get_data_path('dadoVelocidadeAguaNRT.nc')
+    file_my = get_data_path('dadoVelocidadeAguaMY.nc')
     datetime_str = "2025-04-05T12:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
     
     # 1. Load data
-    print("Carregando dados...")
+    print(f"  Arquivo NRT: {file_nrt}")
+    print(f"  Arquivo MY:  {file_my}")
     nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my = load_data(file_nrt, file_my, datetime_str)
     
     # Display available timesteps
