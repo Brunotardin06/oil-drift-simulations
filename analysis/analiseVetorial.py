@@ -286,7 +286,7 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     # Format datetime for display (replace T with space)
     datetime_display = datetime_str.replace("T", " ")
     
-    plt.suptitle(f'Comparação dos Ventos - Região Selecionada ({datetime_display})', 
+    plt.suptitle(f'Comparação Vetorial - Região Selecionada ({datetime_display})', 
                  fontsize=16, weight='bold')
     plt.tight_layout()
     
@@ -614,9 +614,9 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = get_data_path('dadoVelocidadeVentoNRT.nc')
-    file_my = get_data_path('dadoVelocidadeVentoMY.nc')
-    datetime_str = "2025-04-05T12:00:00"
+    file_nrt = get_data_path('aguaANFC.nc')
+    file_my = get_data_path('aguaMultiYear.nc')
+    datetime_str = "2025-01-02T00:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
