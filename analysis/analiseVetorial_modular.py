@@ -286,7 +286,6 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     # Format datetime for display (replace T with space)
     datetime_display = datetime_str.replace("T", " ")
     
-    plt.suptitle(f'Comparação de Correntes Oceânicas - Região Selecionada ({datetime_display})', 
     plt.suptitle(f'Comparação dos Ventos - Região Selecionada ({datetime_display})', 
                  fontsize=16, weight='bold')
     plt.tight_layout()
