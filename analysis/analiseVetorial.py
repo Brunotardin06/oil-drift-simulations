@@ -381,102 +381,78 @@ def analyze_gaussian_fit(diff_u, diff_v):
     diff_v_flat = diff_v_flat[~np.isnan(diff_v_flat)]
     
     print("\n" + "=" * 60)
-    print("ANÁLISE DE DISTRIBUIÇÃO GAUSSIANA:")
+    print("TESTE DE DISTRIBUIÇÃO GAUSSIANA:")
     print("=" * 60)
     
-    # Calculate ideal Gaussian parameters
-    print("\n1. PARÂMETROS IDEAIS PARA DISTRIBUIÇÃO GAUSSIANA:")
-    
-    # For u component
+    # Calculate parameters
     mean_u = np.mean(diff_u_flat)
     std_u = np.std(diff_u_flat)
-    print(f"\n  Componente U (diferença):")
-    print(f"    # Média ideal (μ):       {mean_u:.8f}")
-    print(f"    # Desvio padrão ideal (σ): {std_u:.8f}")
-    print(f"    # Variância ideal (σ²):  {std_u**2:.8f}")
-    
-    # For v component
     mean_v = np.mean(diff_v_flat)
     std_v = np.std(diff_v_flat)
-    print(f"\n  Componente V (diferença):")
-    print(f"    # Média ideal (μ):       {mean_v:.8f}")
-    print(f"    # Desvio padrão ideal (σ): {std_v:.8f}")
-    print(f"    # Variância ideal (σ²):  {std_v**2:.8f}")
     
-    # Shapiro-Wilk Test (best for n < 50)
-    print("\n2. TESTE DE SHAPIRO-WILK (normalidade):")
-    print("   H0: A distribuição é GAUSSIANA")
-    print("   P-value > 0.05 → Não rejeita H0 (é gaussiana)")
-    print("   P-value ≤ 0.05 → Rejeita H0 (NÃO é gaussiana)")
+    # Display parameters
+    print("\nPARÂMETROS DOS DADOS:")
+    print(f"\n  Componente U:")
+    print(f"    Media (mu):     {mean_u:+.8f}")
+    print(f"    Desvio (sigma): {std_u:.8f}")
+    
+    print(f"\n  Componente V:")
+    print(f"    Media (mu):     {mean_v:+.8f}")
+    print(f"    Desvio (sigma): {std_v:.8f}")
+    
+    # Shapiro-Wilk Test
+    print("\n" + "-" * 60)
+    print("SHAPIRO-WILK TEST (melhor para n < 50):")
+    print("  H0: Distribuicao eh GAUSSIANA")
+    print("  Rejeita H0 se p-value <= 0.05")
+    print("-" * 60)
     
     stat_u_sw, p_u_sw = stats.shapiro(diff_u_flat)
     stat_v_sw, p_v_sw = stats.shapiro(diff_v_flat)
     
-    print(f"\n  Componente U:")
-    print(f"    Estatística: {stat_u_sw:.6f}")
-    print(f"    P-value:    {p_u_sw:.6f}", end="")
-    if p_u_sw > 0.05:
-        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
-    else:
-        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    result_u_sw = "GAUSSIANA" if p_u_sw > 0.05 else "NAO GAUSSIANA"
+    result_v_sw = "GAUSSIANA" if p_v_sw > 0.05 else "NAO GAUSSIANA"
     
-    print(f"\n  Componente V:")
-    print(f"    Estatística: {stat_v_sw:.6f}")
-    print(f"    P-value:    {p_v_sw:.6f}", end="")
-    if p_v_sw > 0.05:
-        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
-    else:
-        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    print(f"\n  Componente U: p-value = {p_u_sw:.6f}  [{result_u_sw}]")
+    print(f"  Componente V: p-value = {p_v_sw:.6f}  [{result_v_sw}]")
     
-    # Jarque-Bera Test (uses Skewness and Kurtosis)
-    print("\n3. TESTE DE JARQUE-BERA (Skewness + Kurtosis):")
-    print("   H0: A distribuição é GAUSSIANA")
-    print("   P-value > 0.05 → Não rejeita H0 (é gaussiana)")
-    print("   P-value ≤ 0.05 → Rejeita H0 (NÃO é gaussiana)")
+    # Jarque-Bera Test
+    print("\n" + "-" * 60)
+    print("JARQUE-BERA TEST (baseado em assimetria + curtose):")
+    print("  H0: Distribuicao eh GAUSSIANA")
+    print("  Rejeita H0 se p-value <= 0.05")
+    print("-" * 60)
     
     stat_u_jb, p_u_jb = stats.jarque_bera(diff_u_flat)
     stat_v_jb, p_v_jb = stats.jarque_bera(diff_v_flat)
     
-    print(f"\n  Componente U:")
-    print(f"    Estatística: {stat_u_jb:.6f}")
-    print(f"    P-value:    {p_u_jb:.6f}", end="")
-    if p_u_jb > 0.05:
-        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
-    else:
-        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    result_u_jb = "GAUSSIANA" if p_u_jb > 0.05 else "NAO GAUSSIANA"
+    result_v_jb = "GAUSSIANA" if p_v_jb > 0.05 else "NAO GAUSSIANA"
     
-    print(f"\n  Componente V:")
-    print(f"    Estatística: {stat_v_jb:.6f}")
-    print(f"    P-value:    {p_v_jb:.6f}", end="")
-    if p_v_jb > 0.05:
-        print(" ✓ Não rejeita H0 (pode ser gaussiana)")
-    else:
-        print(" ✗ Rejeita H0 (NÃO é gaussiana)")
+    print(f"\n  Componente U: p-value = {p_u_jb:.6f}  [{result_u_jb}]")
+    print(f"\n  Componente V: p-value = {p_v_jb:.6f}  [{result_v_jb}]")
     
-    # Generate Q-Q plots
-    print("\n4. GERANDO Q-Q PLOTS (comparação visual com gaussiana)...")
+    # Summary
+    print("\n" + "=" * 60)
+    print("Q-Q PLOTS (comparacao visual)...")
     
     fig_qq, axes_qq = plt.subplots(1, 2, figsize=(12, 4.5))
     fig_qq.suptitle('Q-Q Plot: Comparação com Distribuição Gaussiana', fontsize=14, weight='bold')
     
-    # Q-Q plot for u
     stats.probplot(diff_u_flat, dist="norm", plot=axes_qq[0])
     axes_qq[0].set_title('Componente U', fontsize=12, weight='bold')
-    axes_qq[0].set_xlabel('Quantis Teóricos Gaussianos\n(valores esperados em gaussiana padrão)', fontsize=10)
-    axes_qq[0].set_ylabel('Quantis Empíricos dos Dados\n(valores observados ordenados)', fontsize=10)
+    axes_qq[0].set_xlabel('Quantis Teóricos', fontsize=10)
+    axes_qq[0].set_ylabel('Quantis Observados', fontsize=10)
     axes_qq[0].grid(True, alpha=0.3)
     
-    # Q-Q plot for v
     stats.probplot(diff_v_flat, dist="norm", plot=axes_qq[1])
     axes_qq[1].set_title('Componente V', fontsize=12, weight='bold')
-    axes_qq[1].set_xlabel('Quantis Teóricos Gaussianos\n(valores esperados em gaussiana padrão)', fontsize=10)
-    axes_qq[1].set_ylabel('Quantis Empíricos dos Dados\n(valores observados ordenados)', fontsize=10)
+    axes_qq[1].set_xlabel('Quantis Teóricos', fontsize=10)
+    axes_qq[1].set_ylabel('Quantis Observados', fontsize=10)
     axes_qq[1].grid(True, alpha=0.3)
     
     plt.tight_layout()
-    
-    print("    ✓ Q-Q plots gerados")
-    print("    Nota: Pontos próximos à linha diagonal indicam distribuição gaussiana")
+    print("Q-Q plots gerados (pontos na diagonal = gaussiana)")
     print("=" * 60)
     
     return fig_qq
@@ -572,6 +548,180 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     return fig
 
 
+def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
+    # Iterates over all NRT timestamps and analyses if NRT-MY spatial differences
+    # follow a Gaussian distribution for each instant.
+    # Args: nrt, my (full xarray datasets), lat_indices, lon_indices (pre-computed crop indices)
+    # Returns: list of dicts with per-timestamp statistics
+    from scipy import stats as sp_stats
+
+    times_nrt = nrt.time.values
+    results = []
+
+    print("\n" + "=" * 60)
+    print("ANÁLISE TEMPORAL DA DISTRIBUIÇÃO DAS DIFERENÇAS:")
+    print("=" * 60)
+    print(f"Iterando sobre {len(times_nrt)} timestamps...\n")
+
+    for i, t in enumerate(times_nrt):
+        t_str = str(t).replace('T', ' ').split('.')[0]
+        try:
+            nrt_slice = nrt.sel(time=t, method="nearest")
+            my_slice  = my.sel(time=t, method="nearest")
+
+            u_nrt, v_nrt, lon_nrt, lat_nrt = extract_components(nrt_slice)
+            u_my,  v_my,  lon_my,  lat_my  = extract_components(my_slice)
+
+            # Apply same spatial crop
+            u_nrt, v_nrt, lat_c,    lon_c    = apply_crop(u_nrt, v_nrt, lat_nrt, lon_nrt, lat_indices, lon_indices)
+            u_my,  v_my,  lat_my_c, lon_my_c = apply_crop(u_my,  v_my,  lat_my,  lon_my,  lat_indices, lon_indices)
+
+            # Ensure correct dimensions
+            u_nrt, v_nrt = ensure_dimensions(u_nrt, v_nrt)
+            u_my,  v_my  = ensure_dimensions(u_my,  v_my)
+
+            # Align MY grid to NRT grid
+            u_my_al, v_my_al = align_grids(u_my, v_my, lon_my_c, lat_my_c, lon_c, lat_c)
+
+            # Flatten and remove NaN
+            du = (u_nrt - u_my_al).values.flatten()
+            dv = (v_nrt - v_my_al).values.flatten()
+            du = du[~np.isnan(du)]
+            dv = dv[~np.isnan(dv)]
+
+            if len(du) < 3 or len(dv) < 3:
+                continue
+
+            mean_u, std_u = float(np.mean(du)), float(np.std(du))
+            mean_v, std_v = float(np.mean(dv)), float(np.std(dv))
+            skew_u = float(sp_stats.skew(du))
+            skew_v = float(sp_stats.skew(dv))
+            kurt_u = float(sp_stats.kurtosis(du))
+            kurt_v = float(sp_stats.kurtosis(dv))
+
+            # Shapiro-Wilk: best for small samples (n < 5000)
+            _, p_sw_u = sp_stats.shapiro(du)
+            _, p_sw_v = sp_stats.shapiro(dv)
+
+            results.append({
+                'time': t,
+                'time_str': t_str,
+                'mean_u': mean_u, 'std_u': std_u,
+                'mean_v': mean_v, 'std_v': std_v,
+                'skew_u': skew_u, 'skew_v': skew_v,
+                'kurt_u': kurt_u, 'kurt_v': kurt_v,
+                'p_sw_u': p_sw_u, 'p_sw_v': p_sw_v,
+                'diff_u': du,     'diff_v': dv,
+                'n_points': len(du)
+            })
+
+            tag_u = "GAUSSIANA"     if p_sw_u > 0.05 else "NAO-GAUSSIANA"
+            tag_v = "GAUSSIANA"     if p_sw_v > 0.05 else "NAO-GAUSSIANA"
+            print(f"  [{i+1:3d}/{len(times_nrt)}] {t_str} | "
+                  f"μu={mean_u:+.4f} σu={std_u:.4f} [{tag_u}] | "
+                  f"μv={mean_v:+.4f} σv={std_v:.4f} [{tag_v}]")
+
+        except Exception as e:
+            print(f"  [{i+1:3d}/{len(times_nrt)}] {t_str} - ERRO: {e}")
+
+    total = len(results)
+    if total > 0:
+        n_gauss_u = sum(1 for r in results if r['p_sw_u'] > 0.05)
+        n_gauss_v = sum(1 for r in results if r['p_sw_v'] > 0.05)
+        print(f"\nRESUMO FINAL:")
+        print(f"  U: {n_gauss_u}/{total} timestamps com distribuição Gaussiana "
+              f"({100 * n_gauss_u / total:.1f}%)")
+        print(f"  V: {n_gauss_v}/{total} timestamps com distribuição Gaussiana "
+              f"({100 * n_gauss_v / total:.1f}%)")
+
+    return results
+
+
+def plot_all_timestamps_histogram(ts_results):
+    # Aggregates differences from ALL timestamps into a single histogram per component
+    # and checks if the combined distribution follows a Gaussian.
+    # Uses Shapiro-Wilk for n <= 5000, D'Agostino-Pearson (normaltest) for larger samples.
+    # Args: ts_results (list of dicts returned by analyze_all_timestamps_distribution)
+    # Returns: fig
+    from scipy import stats as sp_stats
+
+    if not ts_results:
+        print("Nenhum resultado para plotar.")
+        return None
+
+    # Concatenate all timestamps into single arrays
+    all_du = np.concatenate([r['diff_u'] for r in ts_results])
+    all_dv = np.concatenate([r['diff_v'] for r in ts_results])
+    n_ts   = len(ts_results)
+    n_pts  = len(all_du)
+
+    # MLE Gaussian fit
+    mu_u, sig_u = sp_stats.norm.fit(all_du)
+    mu_v, sig_v = sp_stats.norm.fit(all_dv)
+
+    # Normality test: Shapiro-Wilk up to 5000 samples, D'Agostino-Pearson above
+    if n_pts <= 5000:
+        test_name = "Shapiro-Wilk"
+        _, p_u = sp_stats.shapiro(all_du)
+        _, p_v = sp_stats.shapiro(all_dv)
+    else:
+        test_name = "D'Agostino-Pearson"
+        _, p_u = sp_stats.normaltest(all_du)
+        _, p_v = sp_stats.normaltest(all_dv)
+
+    result_u = "Gaussiana"     if p_u > 0.05 else "Não-Gaussiana"
+    result_v = "Gaussiana"     if p_v > 0.05 else "Não-Gaussiana"
+
+    print("\n" + "=" * 60)
+    print("HISTOGRAMA AGREGADO (TODOS OS TIMESTAMPS):")
+    print("=" * 60)
+    print(f"  Timestamps incluídos: {n_ts}")
+    print(f"  Total de pontos:      {n_pts}")
+    print(f"  Teste de normalidade: {test_name}")
+    print(f"\n  U | μ={mu_u:+.6f}  σ={sig_u:.6f}  p={p_u:.6f}  [{result_u}]")
+    print(f"  V | μ={mu_v:+.6f}  σ={sig_v:.6f}  p={p_v:.6f}  [{result_v}]")
+    print("=" * 60)
+
+    # Bins using Sturges' rule on the combined sample
+    n_bins = int(np.ceil(np.log2(n_pts) + 1))
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(
+        f'Distribuição Agregada das Diferenças (NRT − MY) – {n_ts} timestamps, {n_pts} pontos',
+        fontsize=14, weight='bold'
+    )
+
+    for ax, (comp, data, mu, sig, p_val, color) in zip(axes, [
+        ('U', all_du, mu_u, sig_u, p_u, 'steelblue'),
+        ('V', all_dv, mu_v, sig_v, p_v, 'coral'),
+    ]):
+        ax.hist(data, bins=n_bins, density=True,
+                color=color, alpha=0.7, edgecolor='black', linewidth=0.4,
+                label=f'{n_pts} amostras')
+
+        # Fitted Gaussian curve
+        x_fit = np.linspace(data.min(), data.max(), 400)
+        ax.plot(x_fit, sp_stats.norm.pdf(x_fit, mu, sig),
+                'k-', linewidth=2.0, label=f'N(μ={mu:+.4f}, σ={sig:.4f})')
+
+        ax.axvline(0,  color='black',   linestyle='--', linewidth=0.9, label='zero')
+        ax.axvline(mu, color='darkred', linestyle=':',  linewidth=1.2, label=f'μ = {mu:+.4f}')
+
+        result_str = "Gaussiana" if p_val > 0.05 else "Não-Gaussiana"
+        color_title = 'darkgreen' if p_val > 0.05 else 'darkred'
+        ax.set_title(
+            f'Componente {comp}  |  {test_name}: p = {p_val:.4f}  [{result_str}]',
+            fontsize=11, weight='bold', color=color_title
+        )
+        ax.set_xlabel('Diferença (m/s)', fontsize=11)
+        ax.set_ylabel('Densidade de probabilidade', fontsize=11)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    return fig
+
+
 def get_data_path(filename):
     # Builds a path relative to the script directory
     # Args: filename (str) - name of the file in the analysis directory
@@ -586,7 +736,7 @@ def print_information(nrt_dataset, metrics):
     
 
     print("=" * 60)
-    print("INFORMAÇÕES DO ARQUIVO: dadoVelocidadeVentoNRT.nc")
+    print("INFORMAÇÕES DO ARQUIVO:")
     print("=" * 60)
     print("\nDIMENSÕES:")
     print(nrt_dataset.sizes)
@@ -614,8 +764,8 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = get_data_path('aguaANFC.nc')
-    file_my = get_data_path('aguaMultiYear.nc')
+    file_nrt = get_data_path('cmems_obs-mob_glo_phy-cur_nrt_0.25deg_PT1H-i_1771818690342.nc')
+    file_my = get_data_path('cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i_1771818740018.nc')
     datetime_str = "2025-01-02T00:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
@@ -688,7 +838,13 @@ def main():
     
     # 10. Plot histograms
     fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
-    
+
+    # 11. Analyse distribution over all timestamps
+    ts_results = analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices)
+
+    # 12. Plot aggregated histogram across all timestamps with Gaussian fit
+    fig_agg_hist = plot_all_timestamps_histogram(ts_results)
+
     plt.show()
 
 if __name__ == "__main__":

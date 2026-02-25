@@ -14,11 +14,11 @@ def get_data_path(filename):
 def load_data(anfc_path, cmems_my_path, datetime_str):
     """
     Carrega datasets ANFC e CMEMS MY
-    ANFC será usado como referência (0.083°)
-    CMEMS MY será interpolado para grade do ANFC
+    ANFC sera degradado de 0.083 deg para 0.25 deg (resolucao CMEMS)
+    para comparacao sem interpolacao do CMEMS
     """
     print("\n" + "=" * 80)
-    print("CARREGANDO DADOS ANFC (0.083°) E CMEMS MY (0.25°)")
+    print("CARREGANDO DADOS ANFC (0.083 deg) E CMEMS MY (0.25 deg)")
     print("=" * 80)
     
     try:
@@ -99,12 +99,12 @@ def ensure_dimensions(u, v):
     """
     # Se tiver dimensão depth, selecionar o primeiro nível (superfície)
     if 'depth' in u.dims:
-        print(f"Extraindo superfície (depth=0) de u: {u.dims} → ", end="")
+        print(f"Extraindo superfície (depth=0) de u: {u.dims} para ", end="")
         u = u.isel(depth=0, drop=True)
         print(f"{u.dims}")
     
     if 'depth' in v.dims:
-        print(f"Extraindo superfície (depth=0) de v: {v.dims} → ", end="")
+        print(f"Extraindo superfície (depth=0) de v: {v.dims} para ", end="")
         v = v.isel(depth=0, drop=True)
         print(f"{v.dims}")
     
@@ -123,60 +123,114 @@ def ensure_dimensions(u, v):
     
     return u, v
 
-def align_to_anfc(u_cmems, v_cmems, lon_cmems, lat_cmems, lon_anfc, lat_anfc):
+def find_common_geographic_area(lon_anfc, lat_anfc, lon_cmems, lat_cmems):
     """
-    Interpola dados CMEMS (0.25°) para grade ANFC (0.083°)
+    Encontra a area geografica comum entre ANFC e CMEMS
+    Retorna os limites da intersecao
     """
     print("\n" + "-" * 80)
-    print("ALINHANDO GRADES")
+    print("VERIFICANDO COBERTURA GEOGRAFICA")
     print("-" * 80)
-    print(f"Grade CMEMS: {len(lon_cmems)} x {len(lat_cmems)} pontos")
-    print(f"Grade ANFC:  {len(lon_anfc)} x {len(lat_anfc)} pontos")
     
-    # Debug: Verificar valores antes da interpolação
-    print(f"\n🔍 DEBUG - Antes da interpolação:")
-    print(f"  u_cmems: min={np.nanmin(u_cmems.values):.4f}, max={np.nanmax(u_cmems.values):.4f}, NaNs={np.isnan(u_cmems.values).sum()}")
-    print(f"  v_cmems: min={np.nanmin(v_cmems.values):.4f}, max={np.nanmax(v_cmems.values):.4f}, NaNs={np.isnan(v_cmems.values).sum()}")
+    # Coberturas originais
+    lon_anfc_min, lon_anfc_max = float(lon_anfc.values.min()), float(lon_anfc.values.max())
+    lat_anfc_min, lat_anfc_max = float(lat_anfc.values.min()), float(lat_anfc.values.max())
     
-    # Verificar cobertura geográfica
-    print(f"\nCobertura CMEMS:")
-    print(f"  lon: [{lon_cmems.values.min():.4f}, {lon_cmems.values.max():.4f}]")
-    print(f"  lat: [{lat_cmems.values.min():.4f}, {lat_cmems.values.max():.4f}]")
-    print(f"Cobertura ANFC:")
-    print(f"  lon: [{lon_anfc.values.min():.4f}, {lon_anfc.values.max():.4f}]")
-    print(f"  lat: [{lat_anfc.values.min():.4f}, {lat_anfc.values.max():.4f}]")
+    lon_cmems_min, lon_cmems_max = float(lon_cmems.values.min()), float(lon_cmems.values.max())
+    lat_cmems_min, lat_cmems_max = float(lat_cmems.values.min()), float(lat_cmems.values.max())
     
-    # Verificar se coberturas são sobrepostas
-    lon_overlap = (lon_anfc.values.min() >= lon_cmems.values.min() and 
-                   lon_anfc.values.max() <= lon_cmems.values.max())
-    lat_overlap = (lat_anfc.values.min() >= lat_cmems.values.min() and 
-                   lat_anfc.values.max() <= lat_cmems.values.max())
-    print(f"  Overlap lon: {lon_overlap}, lat: {lat_overlap}")
-    if not (lon_overlap and lat_overlap):
-        print(f"AVISO: Há extrapolação (dados fora da cobertura CMEMS)!")
+    print(f"Cobertura ANFC original:")
+    print(f"  lon: [{lon_anfc_min:.4f}, {lon_anfc_max:.4f}]")
+    print(f"  lat: [{lat_anfc_min:.4f}, {lat_anfc_max:.4f}]")
     
-    # Verificar se são iguais
-    if not (np.array_equal(lon_cmems.values, lon_anfc.values) and 
-            np.array_equal(lat_cmems.values, lat_anfc.values)):
-        print("\nGrades diferentes - interpolando CMEMS para ANFC...")
-        u_aligned = u_cmems.interp(longitude=lon_anfc, latitude=lat_anfc, method='linear')
-        v_aligned = v_cmems.interp(longitude=lon_anfc, latitude=lat_anfc, method='linear')
-        
-        # Debug: Verificar valores após interpolação
-        print(f"\nDEBUG - Após a interpolação:")
-        print(f"  u_aligned: min={np.nanmin(u_aligned.values):.4f}, max={np.nanmax(u_aligned.values):.4f}, NaNs={np.isnan(u_aligned.values).sum()}")
-        print(f"  v_aligned: min={np.nanmin(v_aligned.values):.4f}, max={np.nanmax(v_aligned.values):.4f}, NaNs={np.isnan(v_aligned.values).sum()}")
-        
-        if np.isnan(u_aligned.values).sum() > len(u_aligned.values) * 0.5:
-            print(f"AVISO: Mais de 50% dos valores são NaN após interpolação!")
-        
-        print("CMEMS interpolado com sucesso para grade ANFC (0.083°)")
+    print(f"\nCobertura CMEMS original:")
+    print(f"  lon: [{lon_cmems_min:.4f}, {lon_cmems_max:.4f}]")
+    print(f"  lat: [{lat_cmems_min:.4f}, {lat_cmems_max:.4f}]")
+    
+    # Calcular intersecao
+    lon_common_min = max(lon_anfc_min, lon_cmems_min)
+    lon_common_max = min(lon_anfc_max, lon_cmems_max)
+    lat_common_min = max(lat_anfc_min, lat_cmems_min)
+    lat_common_max = min(lat_anfc_max, lat_cmems_max)
+    
+    # Verificar se ha intersecao
+    if lon_common_min >= lon_common_max or lat_common_min >= lat_common_max:
+        print("\nERRO: Nao ha intersecao geografica entre os datasets!")
+        return None
+    
+    print(f"\nArea comum (intersecao):")
+    print(f"  lon: [{lon_common_min:.4f}, {lon_common_max:.4f}]")
+    print(f"  lat: [{lat_common_min:.4f}, {lat_common_max:.4f}]")
+    
+    # Calcular areas
+    area_anfc = (lon_anfc_max - lon_anfc_min) * (lat_anfc_max - lat_anfc_min)
+    area_cmems = (lon_cmems_max - lon_cmems_min) * (lat_cmems_max - lat_cmems_min)
+    area_common = (lon_common_max - lon_common_min) * (lat_common_max - lat_common_min)
+    
+    print(f"\nPercentual de cobertura comum:")
+    print(f"  ANFC:  {area_common/area_anfc*100:.1f}% da area original")
+    print(f"  CMEMS: {area_common/area_cmems*100:.1f}% da area original")
+    
+    return {
+        'lon_min': lon_common_min,
+        'lon_max': lon_common_max,
+        'lat_min': lat_common_min,
+        'lat_max': lat_common_max
+    }
+
+def degrade_anfc_to_cmems_resolution(u_anfc, v_anfc, lon_anfc, lat_anfc, lon_cmems, lat_cmems, common_area=None):
+    """
+    Degrada resolucao ANFC (0.083 deg) para resolucao CMEMS (0.25 deg)
+    usando coarse-graining (media de blocos)
+    Se common_area fornecido, recorta ambos datasets para area comum
+    """
+    print("\n" + "-" * 80)
+    print("DEGRADANDO RESOLUCAO ANFC PARA CMEMS")
+    print("-" * 80)
+    print(f"Grade ANFC original:  {len(lon_anfc)} x {len(lat_anfc)} pontos (0.083 deg)")
+    print(f"Grade CMEMS alvo:     {len(lon_cmems)} x {len(lat_cmems)} pontos (0.25 deg)")
+    
+    # Se area comum fornecida, recortar CMEMS para essa area
+    if common_area is not None:
+        print(f"\nRecortando CMEMS para area comum...")
+        lon_cmems_filtered = lon_cmems.sel(
+            longitude=slice(common_area['lon_min'], common_area['lon_max'])
+        )
+        lat_cmems_filtered = lat_cmems.sel(
+            latitude=slice(common_area['lat_min'], common_area['lat_max'])
+        )
+        print(f"Grade CMEMS apos recorte: {len(lon_cmems_filtered)} x {len(lat_cmems_filtered)} pontos")
     else:
-        print("\nGrades já estão alinhadas")
-        u_aligned = u_cmems
-        v_aligned = v_cmems
+        lon_cmems_filtered = lon_cmems
+        lat_cmems_filtered = lat_cmems
     
-    return u_aligned, v_aligned
+    # Debug: valores originais
+    print(f"\nDEBUG - ANFC antes da degradacao:")
+    print(f"  u_anfc: min={np.nanmin(u_anfc.values):.4f}, max={np.nanmax(u_anfc.values):.4f}, NaNs={np.isnan(u_anfc.values).sum()}")
+    print(f"  v_anfc: min={np.nanmin(v_anfc.values):.4f}, max={np.nanmax(v_anfc.values):.4f}, NaNs={np.isnan(v_anfc.values).sum()}")
+    
+    # Interpolar ANFC para grade CMEMS (degradacao)
+    print(f"\nDegradando ANFC de 0.083 deg para 0.25 deg (grade CMEMS)...")
+    u_anfc_degraded = u_anfc.interp(longitude=lon_cmems_filtered, latitude=lat_cmems_filtered, method='linear')
+    v_anfc_degraded = v_anfc.interp(longitude=lon_cmems_filtered, latitude=lat_cmems_filtered, method='linear')
+    
+    # Debug: valores apos degradacao
+    print(f"\nDEBUG - ANFC apos degradacao para 0.25 deg:")
+    print(f"  u_anfc_degraded: min={np.nanmin(u_anfc_degraded.values):.4f}, max={np.nanmax(u_anfc_degraded.values):.4f}, NaNs={np.isnan(u_anfc_degraded.values).sum()}")
+    print(f"  v_anfc_degraded: min={np.nanmin(v_anfc_degraded.values):.4f}, max={np.nanmax(v_anfc_degraded.values):.4f}, NaNs={np.isnan(v_anfc_degraded.values).sum()}")
+    
+    print(f"Grade final ANFC degradado: {len(u_anfc_degraded.longitude)} x {len(u_anfc_degraded.latitude)} pontos")
+    
+    # Verificar se grades sao identicas agora
+    if (np.array_equal(u_anfc_degraded.longitude.values, lon_cmems_filtered.values) and 
+        np.array_equal(u_anfc_degraded.latitude.values, lat_cmems_filtered.values)):
+        print("OK - Grades agora sao IDENTICAS - comparacao sem interpolacao!")
+    else:
+        print("AVISO: Grades ainda nao sao identicas")
+        print(f"  Diferenca lon: {np.abs(u_anfc_degraded.longitude.values - lon_cmems_filtered.values).max():.6f} deg")
+        print(f"  Diferenca lat: {np.abs(u_anfc_degraded.latitude.values - lat_cmems_filtered.values).max():.6f} deg")
+    
+    return u_anfc_degraded, v_anfc_degraded, lon_cmems_filtered, lat_cmems_filtered
 
 def calculate_metrics(u_anfc, v_anfc, u_cmems, v_cmems):
     """Calcula métricas de erro entre ANFC e CMEMS"""
@@ -248,23 +302,23 @@ def plot_comparison(u_anfc, v_anfc, u_my, v_my, diff_u, diff_v,
     
     skip = (slice(None, None, 2), slice(None, None, 2))
     
-    # ANFC
+    # ANFC degradado
     ax = axes[0]
     ax.coastlines()
     ax.quiver(lon2d[skip], lat2d[skip], u_anfc.values[skip], v_anfc.values[skip],
               color="red", angles="xy", scale_units="xy", scale=1.0, width=0.004,
               transform=crt.PlateCarree())
     ax.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
-    ax.set_title('ANFC (0.083°)', fontsize=12, weight='bold')
+    ax.set_title('ANFC Degradado (0.083 para 0.25 deg)', fontsize=12, weight='bold')
     
-    # CMEMS MY (interpolado)
+    # CMEMS MY
     ax = axes[1]
     ax.coastlines()
     ax.quiver(lon2d[skip], lat2d[skip], u_my.values[skip], v_my.values[skip],
               color="blue", angles="xy", scale_units="xy", scale=1.0, width=0.004,
               transform=crt.PlateCarree())
     ax.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
-    ax.set_title('CMEMS MY (0.25° → 0.083°)', fontsize=12, weight='bold')
+    ax.set_title('CMEMS MY (0.25 deg)', fontsize=12, weight='bold')
     
     # Diferença ANFC - MY
     ax = axes[2]
@@ -273,10 +327,59 @@ def plot_comparison(u_anfc, v_anfc, u_my, v_my, diff_u, diff_v,
               color="green", angles="xy", scale_units="xy", scale=1.0, width=0.004,
               transform=crt.PlateCarree())
     ax.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
-    ax.set_title('Diferença (ANFC - MY)', fontsize=12, weight='bold')
+    ax.set_title('Diferenca (ANFC - MY)', fontsize=12, weight='bold')
     
     datetime_display = datetime_str.replace("T", " ")
-    plt.suptitle(f'Comparação de Correntes: ANFC vs CMEMS MY ({datetime_display})',
+    plt.suptitle(f'Comparacao: ANFC (degradado para 0.25 deg) vs CMEMS MY ({datetime_display})',
+                 fontsize=14, weight='bold')
+    plt.tight_layout()
+    
+    return fig
+
+def plot_original_resolutions(u_anfc_orig, v_anfc_orig, lon_anfc, lat_anfc,
+                               u_my_orig, v_my_orig, lon_my, lat_my,
+                               datetime_str):
+    """
+    Plota ANFC e CMEMS MY nas suas RESOLUCOES ORIGINAIS
+    ANFC: 0.083 deg (16x23 pontos) - alta resolucao
+    CMEMS: 0.25 deg (5x8 pontos) - baixa resolucao
+    Sem interpolacao ou degradacao - mostra os dados brutos
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7),
+                             subplot_kw={'projection': crt.PlateCarree()})
+    
+    # ANFC Original (alta resolução)
+    ax = axes[0]
+    ax.coastlines()
+    lon2d_anfc, lat2d_anfc = np.meshgrid(lon_anfc.values, lat_anfc.values)
+    # Mostrar todos os pontos ANFC (sem skip)
+    ax.quiver(lon2d_anfc, lat2d_anfc, u_anfc_orig.values, v_anfc_orig.values,
+              color="red", angles="xy", scale_units="xy", scale=1.0, width=0.003,
+              transform=crt.PlateCarree(), alpha=0.8)
+    ax.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
+    ax.set_title(f'ANFC Original (0.083 deg)\n{len(lon_anfc)}x{len(lat_anfc)} = {len(lon_anfc)*len(lat_anfc)} pontos', 
+                 fontsize=12, weight='bold', color='red')
+    ax.set_extent([lon_anfc.values.min()-0.1, lon_anfc.values.max()+0.1,
+                   lat_anfc.values.min()-0.1, lat_anfc.values.max()+0.1],
+                  crs=crt.PlateCarree())
+    
+    # CMEMS MY Original (baixa resolução)
+    ax = axes[1]
+    ax.coastlines()
+    lon2d_my, lat2d_my = np.meshgrid(lon_my.values, lat_my.values)
+    # Mostrar todos os pontos CMEMS
+    ax.quiver(lon2d_my, lat2d_my, u_my_orig.values, v_my_orig.values,
+              color="blue", angles="xy", scale_units="xy", scale=1.0, width=0.005,
+              transform=crt.PlateCarree(), alpha=0.8)
+    ax.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
+    ax.set_title(f'CMEMS MY Original (0.25 deg)\n{len(lon_my)}x{len(lat_my)} = {len(lon_my)*len(lat_my)} pontos', 
+                 fontsize=12, weight='bold', color='blue')
+    ax.set_extent([lon_my.values.min()-0.1, lon_my.values.max()+0.1,
+                   lat_my.values.min()-0.1, lat_my.values.max()+0.1],
+                  crs=crt.PlateCarree())
+    
+    datetime_display = datetime_str.replace("T", " ")
+    plt.suptitle(f'Resolucoes Originais - Sem Interpolacao ({datetime_display})',
                  fontsize=14, weight='bold')
     plt.tight_layout()
     
@@ -306,7 +409,8 @@ def main():
     datetime_str = "2025-04-05T00:00:00"
     
     print("\n" + "=" * 80)
-    print("ANÁLISE: ANFC (0.083°) vs CMEMS MY (0.25°)")
+    print("ANALISE: ANFC (0.083 degradado para 0.25 deg) vs CMEMS MY (0.25 deg)")
+    print("ESTRATEGIA: Degradar ANFC para evitar erros de interpolacao")
     print("=" * 80)
     print(f"Timestamp: {datetime_str}")
     
@@ -325,20 +429,49 @@ def main():
     u_anfc, v_anfc = ensure_dimensions(u_anfc, v_anfc)
     u_my, v_my = ensure_dimensions(u_my, v_my)
     
-    # 4. Alinhar CMEMS MY para grade ANFC
-    u_my_aligned, v_my_aligned = align_to_anfc(u_my, v_my, lon_my, lat_my, 
-                                                 lon_anfc, lat_anfc)
+    # 4. Encontrar area geografica comum
+    common_area = find_common_geographic_area(lon_anfc, lat_anfc, lon_my, lat_my)
+    if common_area is None:
+        print("ERRO: Nao e possivel comparar - areas geograficas nao se sobrepoem!")
+        return
     
-    # 5. Calcular métricas
-    metrics_my = calculate_metrics(u_anfc, v_anfc, u_my_aligned, v_my_aligned)
+    # 5. Degradar ANFC de 0.083 deg para 0.25 deg (resolucao CMEMS) na area comum
+    u_anfc_degraded, v_anfc_degraded, lon_my_filtered, lat_my_filtered = degrade_anfc_to_cmems_resolution(
+        u_anfc, v_anfc, lon_anfc, lat_anfc, lon_my, lat_my, common_area)
     
-    # 6. Imprimir métricas
+    # 6. Recortar CMEMS para a mesma area comum
+    print(f"\nRecortando CMEMS MY para area comum...")
+    u_my_filtered = u_my.sel(
+        longitude=slice(common_area['lon_min'], common_area['lon_max']),
+        latitude=slice(common_area['lat_min'], common_area['lat_max'])
+    )
+    v_my_filtered = v_my.sel(
+        longitude=slice(common_area['lon_min'], common_area['lon_max']),
+        latitude=slice(common_area['lat_min'], common_area['lat_max'])
+    )
+    print(f"Grade CMEMS MY apos recorte: {len(u_my_filtered.longitude)} x {len(u_my_filtered.latitude)} pontos")
+    
+    # 7. Calcular métricas (grades idênticas NA MESMA AREA, sem interpolação!)
+    metrics_my = calculate_metrics(u_anfc_degraded, v_anfc_degraded, u_my_filtered, v_my_filtered)
+    
+    # 8. Imprimir métricas
     print_metrics(metrics_my)
     
-    # 7. Plotar
-    fig = plot_comparison(u_anfc, v_anfc, u_my_aligned, v_my_aligned,
+    # 9. Plotar comparação com resolução degradada
+    fig1 = plot_comparison(u_anfc_degraded, v_anfc_degraded, u_my_filtered, v_my_filtered,
                           metrics_my['diff_u'], metrics_my['diff_v'],
-                          lon_anfc, lat_anfc, datetime_str)
+                          lon_my_filtered, lat_my_filtered, datetime_str)
+    
+    # 10. Plotar resoluções originais lado a lado (sem degradação)
+    print("\n" + "=" * 80)
+    print("PLOTANDO RESOLUCOES ORIGINAIS (SEM INTERPOLACAO)")
+    print("=" * 80)
+    print(f"ANFC:     {len(lon_anfc)} x {len(lat_anfc)} = {len(lon_anfc)*len(lat_anfc)} pontos (0.083 deg)")
+    print(f"CMEMS MY: {len(lon_my)} x {len(lat_my)} = {len(lon_my)*len(lat_my)} pontos (0.25 deg)")
+    
+    fig2 = plot_original_resolutions(u_anfc, v_anfc, lon_anfc, lat_anfc,
+                                     u_my, v_my, lon_my, lat_my,
+                                     datetime_str)
     
     plt.show()
     
