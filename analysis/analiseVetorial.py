@@ -401,11 +401,6 @@ def analyze_gaussian_fit(diff_u, diff_v):
     print(f"    Desvio (sigma): {std_v:.8f}")
     
     # Shapiro-Wilk Test
-    print("\n" + "-" * 60)
-    print("SHAPIRO-WILK TEST (melhor para n < 50):")
-    print("  H0: Distribuicao eh GAUSSIANA")
-    print("  Rejeita H0 se p-value <= 0.05")
-    print("-" * 60)
     
     stat_u_sw, p_u_sw = stats.shapiro(diff_u_flat)
     stat_v_sw, p_v_sw = stats.shapiro(diff_v_flat)
@@ -416,25 +411,8 @@ def analyze_gaussian_fit(diff_u, diff_v):
     print(f"\n  Componente U: p-value = {p_u_sw:.6f}  [{result_u_sw}]")
     print(f"  Componente V: p-value = {p_v_sw:.6f}  [{result_v_sw}]")
     
-    # Jarque-Bera Test
-    print("\n" + "-" * 60)
-    print("JARQUE-BERA TEST (baseado em assimetria + curtose):")
-    print("  H0: Distribuicao eh GAUSSIANA")
-    print("  Rejeita H0 se p-value <= 0.05")
-    print("-" * 60)
-    
-    stat_u_jb, p_u_jb = stats.jarque_bera(diff_u_flat)
-    stat_v_jb, p_v_jb = stats.jarque_bera(diff_v_flat)
-    
-    result_u_jb = "GAUSSIANA" if p_u_jb > 0.05 else "NAO GAUSSIANA"
-    result_v_jb = "GAUSSIANA" if p_v_jb > 0.05 else "NAO GAUSSIANA"
-    
-    print(f"\n  Componente U: p-value = {p_u_jb:.6f}  [{result_u_jb}]")
-    print(f"\n  Componente V: p-value = {p_v_jb:.6f}  [{result_v_jb}]")
-    
     # Summary
     print("\n" + "=" * 60)
-    print("Q-Q PLOTS (comparacao visual)...")
     
     fig_qq, axes_qq = plt.subplots(1, 2, figsize=(12, 4.5))
     fig_qq.suptitle('Q-Q Plot: Comparação com Distribuição Gaussiana', fontsize=14, weight='bold')
@@ -561,7 +539,7 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
     print("\n" + "=" * 60)
     print("ANÁLISE TEMPORAL DA DISTRIBUIÇÃO DAS DIFERENÇAS:")
     print("=" * 60)
-    print(f"Iterando sobre {len(times_nrt)} timestamps...\n")
+    print(f"Iterando sobre {len(times_nrt)} timestamps\n")
 
     for i, t in enumerate(times_nrt):
         t_str = str(t).replace('T', ' ').split('.')[0]
@@ -617,7 +595,8 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
 
             tag_u = "GAUSSIANA"     if p_sw_u > 0.05 else "NAO-GAUSSIANA"
             tag_v = "GAUSSIANA"     if p_sw_v > 0.05 else "NAO-GAUSSIANA"
-            print(f"  [{i+1:3d}/{len(times_nrt)}] {t_str} | "
+            n_samples = len(du)
+            print(f"  [{i+1:3d}/{len(times_nrt)}] {t_str} | n={n_samples} | "
                   f"μu={mean_u:+.4f} σu={std_u:.4f} [{tag_u}] | "
                   f"μv={mean_v:+.4f} σv={std_v:.4f} [{tag_v}]")
 
