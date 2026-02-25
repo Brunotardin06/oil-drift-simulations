@@ -295,9 +295,7 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
 def analyze_error_distribution(diff_u, diff_v):
     # Analyzes error distribution to explain bin frequency patterns
     # Args: diff_u, diff_v (difference arrays)
-    # Returns: None (prints analysis)
-    from scipy import stats
-    
+    # Returns: None (prints analysis    
     # Flatten and remove NaN
     diff_u_flat = diff_u.values.flatten()
     diff_v_flat = diff_v.values.flatten()
@@ -531,7 +529,6 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
     # follow a Gaussian distribution for each instant.
     # Args: nrt, my (full xarray datasets), lat_indices, lon_indices (pre-computed crop indices)
     # Returns: list of dicts with per-timestamp statistics
-    from scipy import stats as sp_stats
 
     times_nrt = nrt.time.values
     results = []
@@ -572,14 +569,14 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
 
             mean_u, std_u = float(np.mean(du)), float(np.std(du))
             mean_v, std_v = float(np.mean(dv)), float(np.std(dv))
-            skew_u = float(sp_stats.skew(du))
-            skew_v = float(sp_stats.skew(dv))
-            kurt_u = float(sp_stats.kurtosis(du))
-            kurt_v = float(sp_stats.kurtosis(dv))
+            skew_u = float(stats.skew(du))
+            skew_v = float(stats.skew(dv))
+            kurt_u = float(stats.kurtosis(du))
+            kurt_v = float(stats.kurtosis(dv))
 
             # Shapiro-Wilk: best for small samples (n < 5000)
-            _, p_sw_u = sp_stats.shapiro(du)
-            _, p_sw_v = sp_stats.shapiro(dv)
+            _, p_sw_u = stats.shapiro(du)
+            _, p_sw_v = stats.shapiro(dv)
 
             results.append({
                 'time': t,
@@ -597,8 +594,8 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
             tag_v = "GAUSSIANA"     if p_sw_v > 0.05 else "NAO-GAUSSIANA"
             n_samples = len(du)
             print(f"  [{i+1:3d}/{len(times_nrt)}] {t_str} | n={n_samples} | "
-                  f"μu={mean_u:+.4f} σu={std_u:.4f} [{tag_u}] | "
-                  f"μv={mean_v:+.4f} σv={std_v:.4f} [{tag_v}]")
+                  f"μu={mean_u:+.4f} σu={std_u:.4f} p_sw={p_sw_u:.10f} [{tag_u}] | "
+                  f"μv={mean_v:+.4f} σv={std_v:.4f} p_sw={p_sw_v:.10f} [{tag_v}]")
 
         except Exception as e:
             print(f"  [{i+1:3d}/{len(times_nrt)}] {t_str} - ERRO: {e}")
@@ -622,8 +619,6 @@ def plot_all_timestamps_histogram(ts_results):
     # Uses Shapiro-Wilk for n <= 5000, D'Agostino-Pearson (normaltest) for larger samples.
     # Args: ts_results (list of dicts returned by analyze_all_timestamps_distribution)
     # Returns: fig
-    from scipy import stats as sp_stats
-
     if not ts_results:
         print("Nenhum resultado para plotar.")
         return None
@@ -635,18 +630,18 @@ def plot_all_timestamps_histogram(ts_results):
     n_pts  = len(all_du)
 
     # MLE Gaussian fit
-    mu_u, sig_u = sp_stats.norm.fit(all_du)
-    mu_v, sig_v = sp_stats.norm.fit(all_dv)
+    mu_u, sig_u = stats.norm.fit(all_du)
+    mu_v, sig_v = stats.norm.fit(all_dv)
 
     # Normality test: Shapiro-Wilk up to 5000 samples, D'Agostino-Pearson above
     if n_pts <= 5000:
         test_name = "Shapiro-Wilk"
-        _, p_u = sp_stats.shapiro(all_du)
-        _, p_v = sp_stats.shapiro(all_dv)
+        _, p_u = stats.shapiro(all_du)
+        _, p_v = stats.shapiro(all_dv)
     else:
         test_name = "D'Agostino-Pearson"
-        _, p_u = sp_stats.normaltest(all_du)
-        _, p_v = sp_stats.normaltest(all_dv)
+        _, p_u = stats.normaltest(all_du)
+        _, p_v = stats.normaltest(all_dv)
 
     result_u = "Gaussiana"     if p_u > 0.05 else "Não-Gaussiana"
     result_v = "Gaussiana"     if p_v > 0.05 else "Não-Gaussiana"
@@ -657,8 +652,8 @@ def plot_all_timestamps_histogram(ts_results):
     print(f"  Timestamps incluídos: {n_ts}")
     print(f"  Total de pontos:      {n_pts}")
     print(f"  Teste de normalidade: {test_name}")
-    print(f"\n  U | μ={mu_u:+.6f}  σ={sig_u:.6f}  p={p_u:.6f}  [{result_u}]")
-    print(f"  V | μ={mu_v:+.6f}  σ={sig_v:.6f}  p={p_v:.6f}  [{result_v}]")
+    print(f"\n  U | μ={mu_u:+.6f}  σ={sig_u:.6f}  p={p_u:.10f}  [{result_u}]")
+    print(f"  V | μ={mu_v:+.6f}  σ={sig_v:.6f}  p={p_v:.10f}  [{result_v}]")
     print("=" * 60)
 
     # Bins using Sturges' rule on the combined sample
@@ -680,7 +675,7 @@ def plot_all_timestamps_histogram(ts_results):
 
         # Fitted Gaussian curve
         x_fit = np.linspace(data.min(), data.max(), 400)
-        ax.plot(x_fit, sp_stats.norm.pdf(x_fit, mu, sig),
+        ax.plot(x_fit, stats.norm.pdf(x_fit, mu, sig),
                 'k-', linewidth=2.0, label=f'N(μ={mu:+.4f}, σ={sig:.4f})')
 
         ax.axvline(0,  color='black',   linestyle='--', linewidth=0.9, label='zero')
@@ -689,12 +684,80 @@ def plot_all_timestamps_histogram(ts_results):
         result_str = "Gaussiana" if p_val > 0.05 else "Não-Gaussiana"
         color_title = 'darkgreen' if p_val > 0.05 else 'darkred'
         ax.set_title(
-            f'Componente {comp}  |  {test_name}: p = {p_val:.4f}  [{result_str}]',
+            f'Componente {comp}  |  {test_name}: p = {p_val:.10f}  [{result_str}]',
             fontsize=11, weight='bold', color=color_title
         )
         ax.set_xlabel('Diferença (m/s)', fontsize=11)
         ax.set_ylabel('Densidade de probabilidade', fontsize=11)
         ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_qq_all_timestamps(ts_results):
+    # Generates Q-Q plots from ALL timestamps aggregated into a single distribution
+    # Checks if the combined distribution follows a Gaussian.
+    # Uses Shapiro-Wilk for n <= 5000, D'Agostino-Pearson (normaltest) for larger samples.
+    # Args: ts_results (list of dicts returned by analyze_all_timestamps_distribution)
+    # Returns: fig
+    if not ts_results:
+        print("Nenhum resultado para plotar.")
+        return None
+
+    # Concatenate all timestamps into single arrays
+    all_du = np.concatenate([r['diff_u'] for r in ts_results])
+    all_dv = np.concatenate([r['diff_v'] for r in ts_results])
+    n_ts   = len(ts_results)
+    n_pts  = len(all_du)
+
+    # MLE Gaussian fit
+    mu_u, sig_u = stats.norm.fit(all_du)
+    mu_v, sig_v = stats.norm.fit(all_dv)
+
+    # Normality test: Shapiro-Wilk up to 5000 samples, D'Agostino-Pearson above
+    if n_pts <= 5000:
+        test_name = "Shapiro-Wilk"
+        _, p_u = stats.shapiro(all_du)
+        _, p_v = stats.shapiro(all_dv)
+    else:
+        test_name = "D'Agostino-Pearson"
+        _, p_u = stats.normaltest(all_du)
+        _, p_v = stats.normaltest(all_dv)
+
+    result_u = "Gaussiana"     if p_u > 0.05 else "Não-Gaussiana"
+    result_v = "Gaussiana"     if p_v > 0.05 else "Não-Gaussiana"
+
+    print("\n" + "=" * 60)
+    print("Q-Q PLOT AGREGADO (TODOS OS TIMESTAMPS):")
+    print("=" * 60)
+    print(f"  Timestamps incluídos: {n_ts}")
+    print(f"  Total de pontos:      {n_pts}")
+    print(f"  Teste de normalidade: {test_name}")
+    print(f"\n  U | μ={mu_u:+.6f}  σ={sig_u:.6f}  p={p_u:.10f}  [{result_u}]")
+    print(f"  V | μ={mu_v:+.6f}  σ={sig_v:.6f}  p={p_v:.10f}  [{result_v}]")
+    print("=" * 60)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(
+        f'Q-Q Plot Agregado (NRT − MY) – {n_ts} timestamps, {n_pts} pontos',
+        fontsize=14, weight='bold'
+    )
+
+    for ax, (comp, data, mu, sig, p_val) in zip(axes, [
+        ('U', all_du, mu_u, sig_u, p_u),
+        ('V', all_dv, mu_v, sig_v, p_v),
+    ]):
+        stats.probplot(data, dist="norm", plot=ax)
+        result_str = "Gaussiana" if p_val > 0.05 else "Não-Gaussiana"
+        color_title = 'darkgreen' if p_val > 0.05 else 'darkred'
+        ax.set_title(
+            f'Componente {comp}  |  {test_name}: p = {p_val:.10f}  [{result_str}]',
+            fontsize=11, weight='bold', color=color_title
+        )
+        ax.set_xlabel('Quantis Teóricos', fontsize=11)
+        ax.set_ylabel('Quantis Observados', fontsize=11)
         ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
@@ -743,8 +806,8 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = get_data_path('cmems_obs-mob_glo_phy-cur_nrt_0.25deg_PT1H-i_1771818690342.nc')
-    file_my = get_data_path('cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i_1771818740018.nc')
+    file_nrt = get_data_path('dadoVelocidadeVentoNRT.nc')
+    file_my = get_data_path('dadoVelocidadeVentoMY.nc')
     datetime_str = "2025-01-02T00:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
@@ -811,10 +874,10 @@ def main():
     
     # 9.5. Analyze error distribution
     analyze_error_distribution(metrics['diff_u'], metrics['diff_v'])
-    
-    # 9.6. Analyze Gaussian fit
-    fig_qq = analyze_gaussian_fit(metrics['diff_u'], metrics['diff_v'])
-    
+
+    # 9.6. Q-Q plot do timestamp selecionado
+    fig_qq_selected = analyze_gaussian_fit(metrics['diff_u'], metrics['diff_v'])
+
     # 10. Plot histograms
     fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
 
@@ -823,6 +886,9 @@ def main():
 
     # 12. Plot aggregated histogram across all timestamps with Gaussian fit
     fig_agg_hist = plot_all_timestamps_histogram(ts_results)
+
+    # 13. Q-Q plot aggregated across all timestamps
+    fig_qq = plot_qq_all_timestamps(ts_results)
 
     plt.show()
 
