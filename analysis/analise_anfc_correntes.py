@@ -210,21 +210,20 @@ def degrade_anfc_to_cmems_resolution(u_anfc, v_anfc, lon_anfc, lat_anfc, lon_cme
     print(f"  v_anfc: min={np.nanmin(v_anfc.values):.4f}, max={np.nanmax(v_anfc.values):.4f}, NaNs={np.isnan(v_anfc.values).sum()}")
     
     # Interpolar ANFC para grade CMEMS (degradacao)
-    print(f"\nDegradando ANFC de 0.083 deg para 0.25 deg (grade CMEMS)...")
     u_anfc_degraded = u_anfc.interp(longitude=lon_cmems_filtered, latitude=lat_cmems_filtered, method='linear')
     v_anfc_degraded = v_anfc.interp(longitude=lon_cmems_filtered, latitude=lat_cmems_filtered, method='linear')
     
     # Debug: valores apos degradacao
     print(f"\nDEBUG - ANFC apos degradacao para 0.25 deg:")
     print(f"  u_anfc_degraded: min={np.nanmin(u_anfc_degraded.values):.4f}, max={np.nanmax(u_anfc_degraded.values):.4f}, NaNs={np.isnan(u_anfc_degraded.values).sum()}")
-    print(f"  v_anfc_degraded: min={np.nanmin(v_anfc_degraded.values):.4f}, max={np.nanmax(v_anfc_degraded.values):.4f}, NaNs={np.isnan(v_anfc_degraded.values).sum()}")
+    print(f"  v_anfc_degraded: min={np.nanmin(v_anfc_degraded.values):.4f}, max={np.nanmax(v_anfc_degraded.values):.4f}, NaNs={np.isnan(v_anfc_degraded.values).sum()} \n")
     
-    print(f"Grade final ANFC degradado: {len(u_anfc_degraded.longitude)} x {len(u_anfc_degraded.latitude)} pontos")
+    print(f"Grade final ANFC degradado: {len(u_anfc_degraded.longitude)} x {len(u_anfc_degraded.latitude)} pontos\n")
     
     # Verificar se grades sao identicas agora
     if (np.array_equal(u_anfc_degraded.longitude.values, lon_cmems_filtered.values) and 
         np.array_equal(u_anfc_degraded.latitude.values, lat_cmems_filtered.values)):
-        print("OK - Grades agora sao IDENTICAS - comparacao sem interpolacao!")
+        print("Grades idênticas")
     else:
         print("AVISO: Grades ainda nao sao identicas")
         print(f"  Diferenca lon: {np.abs(u_anfc_degraded.longitude.values - lon_cmems_filtered.values).max():.6f} deg")
@@ -440,7 +439,6 @@ def main():
         u_anfc, v_anfc, lon_anfc, lat_anfc, lon_my, lat_my, common_area)
     
     # 6. Recortar CMEMS para a mesma area comum
-    print(f"\nRecortando CMEMS MY para area comum...")
     u_my_filtered = u_my.sel(
         longitude=slice(common_area['lon_min'], common_area['lon_max']),
         latitude=slice(common_area['lat_min'], common_area['lat_max'])
