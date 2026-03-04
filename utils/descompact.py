@@ -1,39 +1,39 @@
 import os, zipfile, hashlib, unicodedata
 from pathlib import Path
 
-def listar_zips(path):
+def listarZips(path):
     return [nome for nome in os.listdir(path) if nome.lower().endswith(".zip")]
 
 
-def listar_pastas(path):
+def listarPastas(path):
     return [nome for nome in os.listdir(path) if (Path(path) / nome).is_dir()]
 
 
-def para_caminho_longo_windows(path):
-    path_str = str(Path(path).resolve())
+def paraCaminhoLongoWindows(path):
+    pathStr = str(Path(path).resolve())
     if os.name != "nt":
-        return path_str
-    if path_str.startswith("\\\\?\\"):
-        return path_str
-    if path_str.startswith("\\\\"):
-        return "\\\\?\\UNC\\" + path_str[2:]
-    return "\\\\?\\" + path_str
+        return pathStr
+    if pathStr.startswith("\\\\?\\"):
+        return pathStr
+    if pathStr.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + pathStr[2:]
+    return "\\\\?\\" + pathStr
 
 
-def nome_destino_curto(caminho_zip):
-    stem = Path(caminho_zip).stem
+def nomeDestinoCurto(caminhoZip):
+    stem = Path(caminhoZip).stem
     prefixo = stem[:40].rstrip()
     sufixo = hashlib.md5(stem.encode("utf-8")).hexdigest()[:8]
     return f"{prefixo}_{sufixo}"
 
 
-def chave_flexivel(texto):
-    texto_norm = unicodedata.normalize("NFKD", texto)
-    sem_acentos = "".join(ch for ch in texto_norm if not unicodedata.combining(ch))
-    return "".join(ch for ch in sem_acentos.lower() if ch.isalnum())
+def chaveFlexivel(texto):
+    textoNorm = unicodedata.normalize("NFKD", texto)
+    semAcentos = "".join(ch for ch in textoNorm if not unicodedata.combining(ch))
+    return "".join(ch for ch in semAcentos.lower() if ch.isalnum())
 
 
-def resolver_caminho_entrada(path):
+def resolverCaminhoEntrada(path):
     p = Path(path)
     if p.exists():
         return p
@@ -43,28 +43,28 @@ def resolver_caminho_entrada(path):
     if not parent.exists() or not parent.is_dir():
         return p
 
-    chave_alvo = chave_flexivel(alvo)
+    chaveAlvo = chaveFlexivel(alvo)
     for candidato in parent.iterdir():
-        if chave_flexivel(candidato.name) == chave_alvo:
+        if chaveFlexivel(candidato.name) == chaveAlvo:
             return candidato
 
     return p
 
 
-def extrair_zip_no_mesmo_nivel(path, nome_zip):
-    caminho_zip = Path(path) / nome_zip
-    pasta_destino = caminho_zip.parent / nome_destino_curto(caminho_zip)
-    pasta_destino.mkdir(parents=True, exist_ok=True)
+def extrairZipNoMesmoNivel(path, nomeZip):
+    caminhoZip = Path(path) / nomeZip
+    pastaDestino = caminhoZip.parent / nomeDestinoCurto(caminhoZip)
+    pastaDestino.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(para_caminho_longo_windows(caminho_zip), "r") as zip_ref:
-        zip_ref.extractall(para_caminho_longo_windows(pasta_destino))
+    with zipfile.ZipFile(paraCaminhoLongoWindows(caminhoZip), "r") as zipRef:
+        zipRef.extractall(paraCaminhoLongoWindows(pastaDestino))
 
-    print(f"Extraído: {nome_zip}")
-    print(f"Destino: {pasta_destino}\n")
+    print(f"Extraído: {nomeZip}")
+    print(f"Destino: {pastaDestino}\n")
 
 
-def menu_extracao(path):
-    path = resolver_caminho_entrada(path)
+def menuExtracao(path):
+    path = resolverCaminhoEntrada(path)
     if not os.path.isdir(path):
         print(f"Caminho inválido: {path}")
         return
@@ -73,8 +73,8 @@ def menu_extracao(path):
     raiz = Path(path)
 
     while True:
-        pastas = listar_pastas(atual)
-        arquivos = listar_zips(atual)
+        pastas = listarPastas(atual)
+        arquivos = listarZips(atual)
 
         print("\n=== MENU DE NAVEGAÇÃO E EXTRAÇÃO ===")
         print(f"Nível atual: {atual}")
@@ -110,16 +110,16 @@ def menu_extracao(path):
                 continue
 
             try:
-                index_pasta = int(input("Digite o ID da pasta (número após P): "))
+                indexPasta = int(input("Digite o ID da pasta (número após P): "))
             except ValueError:
                 print("ID inválido.")
                 continue
 
-            if index_pasta < 1 or index_pasta > len(pastas):
+            if indexPasta < 1 or indexPasta > len(pastas):
                 print("ID fora do intervalo.")
                 continue
 
-            atual = atual / pastas[index_pasta - 1]
+            atual = atual / pastas[indexPasta - 1]
             continue
 
         if opcao == "2":
@@ -134,8 +134,8 @@ def menu_extracao(path):
                 print("Nenhum arquivo .zip encontrado neste nível.")
                 continue
 
-            for nome_zip in arquivos:
-                extrair_zip_no_mesmo_nivel(atual, nome_zip)
+            for nomeZip in arquivos:
+                extrairZipNoMesmoNivel(atual, nomeZip)
             print("Extração concluída.")
 
         elif opcao == "4":
@@ -144,16 +144,16 @@ def menu_extracao(path):
                 continue
 
             try:
-                index_extract = int(input("Digite o ID do zip (número após Z): "))
+                indexExtract = int(input("Digite o ID do zip (número após Z): "))
             except ValueError:
                 print("ID inválido.")
                 continue
 
-            if index_extract < 1 or index_extract > len(arquivos):
+            if indexExtract < 1 or indexExtract > len(arquivos):
                 print("ID fora do intervalo.")
                 continue
 
-            extrair_zip_no_mesmo_nivel(atual, arquivos[index_extract - 1])
+            extrairZipNoMesmoNivel(atual, arquivos[indexExtract - 1])
 
         else:
             print("Opção inválida.")
@@ -161,4 +161,4 @@ def menu_extracao(path):
 
 if __name__ == "__main__":
     caminho = input("Informe o diretório raiz: ").strip()
-    menu_extracao(caminho)
+    menuExtracao(caminho)
