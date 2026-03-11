@@ -564,7 +564,23 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
             du = du[~np.isnan(du)]
             dv = dv[~np.isnan(dv)]
 
-            if len(du) < 3 or len(dv) < 3:
+            # Vector-by-vector magnitude variation (NRT vs MY)
+            mag_nrt = np.sqrt(u_nrt.values.flatten()**2 + v_nrt.values.flatten()**2)
+            mag_my = np.sqrt(u_my_al.values.flatten()**2 + v_my_al.values.flatten()**2)
+            dmag = mag_nrt - mag_my
+            mask_mag = ~(np.isnan(mag_nrt) | np.isnan(mag_my))
+            dmag = dmag[mask_mag]
+
+            # Vector-by-vector angle variation (NRT vs MY), wrapped to [-180, 180]
+            theta_nrt = np.degrees(np.arctan2(v_nrt.values.flatten(), u_nrt.values.flatten()))
+            theta_my = np.degrees(np.arctan2(v_my_al.values.flatten(), u_my_al.values.flatten()))
+            dtheta = theta_nrt - theta_my
+            dtheta = ((dtheta + 180.0) % 360.0) - 180.0
+            mask_theta = ~(np.isnan(theta_nrt) | np.isnan(theta_my))
+            dtheta = dtheta[mask_theta]
+            dtheta_time_str = np.full(dtheta.shape, t_str, dtype=object)
+
+            if len(du) < 3 or len(dv) < 3 or len(dmag) < 3:
                 continue
 
             mean_u, std_u = float(np.mean(du)), float(np.std(du))
@@ -587,6 +603,9 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
                 'kurt_u': kurt_u, 'kurt_v': kurt_v,
                 'p_sw_u': p_sw_u, 'p_sw_v': p_sw_v,
                 'diff_u': du,     'diff_v': dv,
+                'diff_mag': dmag,
+                'diff_theta_deg': dtheta,
+                'diff_theta_time_str': dtheta_time_str,
                 'n_points': len(du)
             })
 
@@ -691,6 +710,208 @@ def plot_all_timestamps_histogram(ts_results):
         ax.set_ylabel('Densidade de probabilidade', fontsize=11)
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_all_timestamps_angle_histogram(ts_results):
+    # Aggregates vector-by-vector angular variation (NRT vs MY) from all timestamps
+    # and builds a histogram with circular statistics for analysis.
+    # Args: ts_results (list of dicts returned by analyze_all_timestamps_distribution)
+    # Returns: fig
+    if not ts_results:
+        print("Nenhum resultado para plotar.")
+        return None
+
+    all_dtheta = np.concatenate([
+        r['diff_theta_deg'] for r in ts_results
+        if 'diff_theta_deg' in r and len(r['diff_theta_deg']) > 0
+    ])
+    all_dtheta_time = np.concatenate([
+        r['diff_theta_time_str'] for r in ts_results
+        if 'diff_theta_time_str' in r and len(r['diff_theta_time_str']) > 0
+    ])
+
+    if len(all_dtheta) == 0:
+        print("Nenhuma variação angular disponível para plotar.")
+        return None
+
+    n_ts = len(ts_results)
+    n_pts = len(all_dtheta)
+
+    # Circular stats (angles in radians)
+    all_rad = np.radians(all_dtheta)
+    mean_circ_rad = stats.circmean(all_rad, high=np.pi, low=-np.pi)
+    std_circ_rad = stats.circstd(all_rad, high=np.pi, low=-np.pi)
+
+    mean_circ_deg = float(np.degrees(mean_circ_rad))
+    std_circ_deg = float(np.degrees(std_circ_rad))
+
+    # Complementary linear stats for practical interpretation
+    mean_lin = float(np.mean(all_dtheta))
+    std_lin = float(np.std(all_dtheta))
+    q25 = float(np.percentile(all_dtheta, 25))
+    q05 = float(np.percentile(all_dtheta, 5))
+    q50 = float(np.percentile(all_dtheta, 50))
+    q75 = float(np.percentile(all_dtheta, 75))
+    q95 = float(np.percentile(all_dtheta, 95))
+
+    # Outliers by IQR rule
+    iqr = q75 - q25
+    outlier_low = q25 - 1.5 * iqr
+    outlier_high = q75 + 1.5 * iqr
+    outlier_mask = (all_dtheta < outlier_low) | (all_dtheta > outlier_high)
+    outliers = all_dtheta[outlier_mask]
+    outlier_times = all_dtheta_time[outlier_mask]
+    n_outliers = len(outliers)
+    pct_outliers = (100.0 * n_outliers / n_pts) if n_pts > 0 else 0.0
+
+    # Shapiro-Wilk test for normality
+    _, p_sw_theta = stats.shapiro(all_dtheta)
+    test_name = "Shapiro-Wilk"
+    is_gaussian = "GAUSSIANA" if p_sw_theta > 0.05 else "NÃO-GAUSSIANA"
+
+    outlier_time_counts = {}
+    for ts in outlier_times:
+        outlier_time_counts[ts] = outlier_time_counts.get(ts, 0) + 1
+    outlier_time_sorted = sorted(outlier_time_counts.items(), key=lambda x: x[1], reverse=True)
+
+    print("\n" + "=" * 60)
+    print("HISTOGRAMA AGREGADO DA VARIAÇÃO ANGULAR (NRT vs MY):")
+    print("=" * 60)
+    print(f"  Timestamps incluídos: {n_ts}")
+    print(f"  Total de pontos:      {n_pts}")
+    print(f"  Média circular:       {mean_circ_deg:+.4f}°")
+    print(f"  Desvio circular:      {std_circ_deg:.4f}°")
+    print(f"  Média linear:         {mean_lin:+.4f}°")
+    print(f"  Desvio linear:        {std_lin:.4f}°")
+    print(f"  Percentis (5/50/95):  {q05:+.4f}° / {q50:+.4f}° / {q95:+.4f}°")
+    print(f"  Outliers (IQR):       {n_outliers} ({pct_outliers:.2f}%)")
+    print(f"  Limites IQR:          [{outlier_low:+.4f}°, {outlier_high:+.4f}°]")
+    print(f"  Teste {test_name}:     p-value = {p_sw_theta:.10f} [{is_gaussian}]")
+    if n_outliers > 0:
+        print("  Timestamps com outliers (top 10):")
+        for ts, count in outlier_time_sorted[:10]:
+            print(f"    {ts}: {count} pontos outliers")
+    print("=" * 60)
+
+    # 5-degree bins in [-180, 180]
+    bins = np.arange(-180, 185, 5)
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 5.2))
+    fig.suptitle(
+        f'Distribuição Agregada da Variação Angular (NRT − MY) – {n_ts} timestamps, {n_pts} pontos',
+        fontsize=14, weight='bold'
+    )
+
+    ax.hist(all_dtheta, bins=bins, density=True,
+            color='mediumpurple', alpha=0.75, edgecolor='black', linewidth=0.4,
+            label=f'{n_pts} amostras')
+
+    ax.axvline(0.0, color='black', linestyle='--', linewidth=1.0, label='0° (mesma direção)')
+    ax.axvline(mean_circ_deg, color='darkred', linestyle=':', linewidth=1.3,
+               label=f'Média circular = {mean_circ_deg:+.2f}°')
+    ax.axvline(outlier_low, color='orange', linestyle='--', linewidth=1.1,
+               label=f'Limite outlier inf. = {outlier_low:+.2f}°')
+    ax.axvline(outlier_high, color='orange', linestyle='--', linewidth=1.1,
+               label=f'Limite outlier sup. = {outlier_high:+.2f}°')
+
+    # Rug marks for outliers at the bottom of plot
+    if n_outliers > 0:
+        y_rug = np.full(n_outliers, 0.0)
+        ax.plot(outliers, y_rug, '|', color='orange', markersize=7,
+                markeredgewidth=1.1, alpha=0.85, label=f'Outliers = {n_outliers}')
+
+    color_title = 'darkgreen' if p_sw_theta > 0.05 else 'darkred'
+    ax.set_title(
+        f'Variação Angular Δθ (vetor a vetor)  |  {test_name}: p = {p_sw_theta:.10f}  [{is_gaussian}]',
+        fontsize=11, weight='bold', color=color_title
+    )
+    ax.set_xlabel('Variação angular Δθ (graus)', fontsize=11)
+    ax.set_ylabel('Densidade de probabilidade', fontsize=11)
+    ax.set_xlim(-180, 180)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_all_timestamps_magnitude_histogram(ts_results):
+    # Aggregates vector-by-vector magnitude variation (NRT vs MY) from all timestamps
+    # and builds a histogram for analysis.
+    # Args: ts_results (list of dicts returned by analyze_all_timestamps_distribution)
+    # Returns: fig
+    if not ts_results:
+        print("Nenhum resultado para plotar.")
+        return None
+
+    all_dmag = np.concatenate([
+        r['diff_mag'] for r in ts_results
+        if 'diff_mag' in r and len(r['diff_mag']) > 0
+    ])
+
+    if len(all_dmag) == 0:
+        print("Nenhuma variação de magnitude disponível para plotar.")
+        return None
+
+    n_ts = len(ts_results)
+    n_pts = len(all_dmag)
+
+    mean_mag = float(np.mean(all_dmag))
+    std_mag = float(np.std(all_dmag))
+    q05 = float(np.percentile(all_dmag, 5))
+    q50 = float(np.percentile(all_dmag, 50))
+    q95 = float(np.percentile(all_dmag, 95))
+
+    mu_fit, sig_fit = stats.norm.fit(all_dmag)
+
+    # Shapiro-Wilk test for normality
+    _, p_mag = stats.shapiro(all_dmag)
+    test_name = "Shapiro-Wilk"
+    result_mag = "Gaussiana" if p_mag > 0.05 else "Não-Gaussiana"
+
+    print("\n" + "=" * 60)
+    print("HISTOGRAMA AGREGADO DA VARIAÇÃO DE MAGNITUDE (NRT vs MY):")
+    print("=" * 60)
+    print(f"  Timestamps incluídos: {n_ts}")
+    print(f"  Total de pontos:      {n_pts}")
+    print(f"  Média:               {mean_mag:+.6f} m/s")
+    print(f"  Desvio padrão:        {std_mag:.6f} m/s")
+    print(f"  Percentis (5/50/95):  {q05:+.6f} / {q50:+.6f} / {q95:+.6f} m/s")
+    print(f"  Teste {test_name}:     p-value = {p_mag:.10f} [{result_mag}]")
+    print("=" * 60)
+
+    n_bins = int(np.ceil(np.log2(n_pts) + 1))
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 5.2))
+    fig.suptitle(
+        f'Distribuição Agregada da Variação de Magnitude (NRT − MY) – {n_ts} timestamps, {n_pts} pontos',
+        fontsize=14, weight='bold'
+    )
+
+    ax.hist(all_dmag, bins=n_bins, density=True,
+            color='teal', alpha=0.75, edgecolor='black', linewidth=0.4,
+            label=f'{n_pts} amostras')
+
+    x_fit = np.linspace(all_dmag.min(), all_dmag.max(), 400)
+    ax.plot(x_fit, stats.norm.pdf(x_fit, mu_fit, sig_fit),
+            'k-', linewidth=1.8, label=f'N(μ={mu_fit:+.4f}, σ={sig_fit:.4f})')
+
+    ax.axvline(0.0, color='black', linestyle='--', linewidth=1.0, label='0 (mesma magnitude)')
+    ax.axvline(mean_mag, color='darkred', linestyle=':', linewidth=1.3,
+               label=f'Média = {mean_mag:+.4f} m/s')
+
+    color_title = 'darkgreen' if p_mag > 0.05 else 'darkred'
+    ax.set_title(
+        f'Variação de Magnitude Δ|V| (vetor a vetor)  |  {test_name}: p = {p_mag:.10f}  [{result_mag}]',
+        fontsize=11, weight='bold', color=color_title
+    )
+    ax.set_xlabel('Variação de magnitude Δ|V| (m/s)', fontsize=11)
+    ax.set_ylabel('Densidade de probabilidade', fontsize=11)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
     return fig
@@ -808,7 +1029,7 @@ def main():
     # Input parameters
     file_nrt = get_data_path('dadoVelocidadeVentoNRT.nc')
     file_my = get_data_path('dadoVelocidadeVentoMY.nc')
-    datetime_str = "2025-01-02T00:00:00"
+    datetime_str = "2025-04-05T23:00:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
@@ -873,13 +1094,13 @@ def main():
     print_information(nrt, metrics)
     
     # 9.5. Analyze error distribution
-    analyze_error_distribution(metrics['diff_u'], metrics['diff_v'])
+    #analyze_error_distribution(metrics['diff_u'], metrics['diff_v'])
 
     # 9.6. Q-Q plot do timestamp selecionado
-    fig_qq_selected = analyze_gaussian_fit(metrics['diff_u'], metrics['diff_v'])
+    ##fig_qq_selected = analyze_gaussian_fit(metrics['diff_u'], metrics['diff_v'])
 
     # 10. Plot histograms
-    fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
+    #fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
 
     # 11. Analyse distribution over all timestamps
     ts_results = analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices)
@@ -887,8 +1108,14 @@ def main():
     # 12. Plot aggregated histogram across all timestamps with Gaussian fit
     fig_agg_hist = plot_all_timestamps_histogram(ts_results)
 
+    # 12.1. Plot aggregated histogram of vector-by-vector angular variation
+    fig_agg_angle = plot_all_timestamps_angle_histogram(ts_results)
+
+    # 12.2. Plot aggregated histogram of vector-by-vector magnitude variation
+    fig_agg_magnitude = plot_all_timestamps_magnitude_histogram(ts_results)
+
     # 13. Q-Q plot aggregated across all timestamps
-    fig_qq = plot_qq_all_timestamps(ts_results)
+    ##fig_qq = plot_qq_all_timestamps(ts_results)
 
     plt.show()
 
