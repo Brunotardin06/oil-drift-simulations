@@ -3,3 +3,6 @@ documentos/
 .venv/
 __pycache__/
 *.pyc
+analysis/*.nc
+analysis/BaixadoDia4/
+analysis/BaixadoDia5/

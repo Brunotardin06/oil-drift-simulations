@@ -1027,9 +1027,9 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = get_data_path('dadoVelocidadeVentoNRT.nc')
-    file_my = get_data_path('dadoVelocidadeVentoMY.nc')
-    datetime_str = "2025-04-05T23:00:00"
+    file_nrt = get_data_path('BaixadoDia4/pub03_06_03.nc')
+    file_my = get_data_path('BaixadoDia5/pub04_06_03.nc')
+    datetime_str = "2026-03-05T23:30:00"
     lat_min_req, lat_max_req = -25.28, -25.18
     lon_min_req, lon_max_req = -43.00, -42.70
     n_expand = 3
