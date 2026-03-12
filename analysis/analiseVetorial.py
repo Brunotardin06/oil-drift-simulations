@@ -4,14 +4,66 @@ import xarray as xr
 import cartopy.crs as crt
 from scipy import stats
 import os
+import io
+
+from PIL import Image
 
 
-def load_data(file_nrt, file_my, datetime_str):
+def _infer_lat_lon_dims(data_array):
+    lat_candidates = ("latitude", "lat")
+    lon_candidates = ("longitude", "lon")
+
+    lat_dim = next((d for d in data_array.dims if d.lower() in lat_candidates), None)
+    lon_dim = next((d for d in data_array.dims if d.lower() in lon_candidates), None)
+
+    if lat_dim is None or lon_dim is None:
+        raise ValueError(f"Não foi possível inferir dimensões lat/lon em {data_array.dims}")
+
+    return lat_dim, lon_dim
+
+
+def _extract_lon_lat_coords(slice_data):
+    coord_names = set(slice_data.coords)
+
+    if "longitude" in coord_names and "latitude" in coord_names:
+        return slice_data.longitude, slice_data.latitude
+
+    if "lon" in coord_names and "lat" in coord_names:
+        return slice_data.lon, slice_data.lat
+
+    lon_name = next((c for c in slice_data.coords if "lon" in c.lower()), None)
+    lat_name = next((c for c in slice_data.coords if "lat" in c.lower()), None)
+
+    if lon_name is None or lat_name is None:
+        raise KeyError(f"Coordenadas não reconhecidas. Disponíveis: {sorted(coord_names)}")
+
+    return slice_data[lon_name], slice_data[lat_name]
+
+
+def _extract_uv_components(slice_data):
+    vars_available = set(slice_data.data_vars)
+    candidates = [
+        ("uo", "vo"),
+        ("sw_cur_u", "sw_cur_v"),
+        ("u", "v"),
+    ]
+
+    for u_name, v_name in candidates:
+        if u_name in vars_available and v_name in vars_available:
+            return slice_data[u_name].squeeze(drop=True), slice_data[v_name].squeeze(drop=True), u_name, v_name
+
+    raise KeyError(
+        "Par de variáveis de corrente não reconhecido. "
+        f"Disponíveis: {sorted(vars_available)}"
+    )
+
+
+def load_data(file_ref, file_cmp, datetime_str):
     # Loads NRT and MY datasets and selects the specified time instant
-    # Args: file_nrt (NetCDF path), file_my (NetCDF path), datetime_str (ISO format)
+    # Args: file_ref (NetCDF path), file_cmp (NetCDF path), datetime_str (ISO format)
     # Returns: (nrt_dataset, my_dataset, nrt_slice, my_slice, actual_time_nrt, actual_time_my)
-    nrt = xr.open_dataset(file_nrt)
-    my = xr.open_dataset(file_my)
+    nrt = xr.open_dataset(file_ref)
+    my = xr.open_dataset(file_cmp)
     
     # Select time using nearest method
     nrt_slice = nrt.sel(time=datetime_str, method="nearest")
@@ -43,10 +95,9 @@ def extract_components(slice_data):
     # Extracts u, v components and coordinates from a data slice
     # Args: slice_data (xarray dataset filtered by time)
     # Returns: (u, v, lon, lat)
-    u = slice_data.uo.squeeze(drop=True)
-    v = slice_data.vo.squeeze(drop=True)
-    lon = slice_data.longitude
-    lat = slice_data.latitude
+    u, v, u_name, v_name = _extract_uv_components(slice_data)
+    lon, lat = _extract_lon_lat_coords(slice_data)
+    print(f"Componentes detectados: {u_name}/{v_name}")
     
     return u, v, lon, lat
 
@@ -82,57 +133,55 @@ def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_
     return lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max
 """
 
-def calculate_spatial_crop(lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_max_req, n_expand=3):
-    # Calculates indices for spatial crop based on requested bounds and expansion
-    # Args: lat, lon (dataset coordinates), lat/lon_min/max_req (requested limits), n_expand (extra points, default: 3)
+def calculate_spatial_crop(lat, lon, lat_min_req=None, lat_max_req=None, lon_min_req=None, lon_max_req=None, n_expand=3):
+    # Calculates indices for spatial crop based on requested bounds and expansion.
+    # Missing limits are treated as open bounds; if both bounds of an axis are missing,
+    # the full axis is used.
+    # Args: lat, lon (dataset coordinates), lat/lon_min/max_req (optional requested limits), n_expand (extra points, default: 3)
     # Returns: (lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max)
 
     lat_vals = lat.values
     lon_vals = lon.values
+    n_expand = max(0, int(n_expand))
 
-    # Normalize requested bounds
-    lat_lo, lat_hi = (lat_min_req, lat_max_req) if lat_min_req <= lat_max_req else (lat_max_req, lat_min_req)
-    lon_lo, lon_hi = (lon_min_req, lon_max_req) if lon_min_req <= lon_max_req else (lon_max_req, lon_min_req)
+    def compute_axis_indices(axis_vals, req_min, req_max):
+        if req_min is None and req_max is None:
+            return np.arange(len(axis_vals))
 
-    # Build mask of points inside requested bounds
-    lat_mask = (lat_vals >= lat_lo) & (lat_vals <= lat_hi)
-    lon_mask = (lon_vals >= lon_lo) & (lon_vals <= lon_hi)
+        axis_min = float(np.min(axis_vals))
+        axis_max = float(np.max(axis_vals))
 
-    print(f"Debug 1: {np.where(lat_mask)[0]}")
+        lo = axis_min if req_min is None else req_min
+        hi = axis_max if req_max is None else req_max
+        lo, hi = (lo, hi) if lo <= hi else (hi, lo)
 
-    if lat_mask.any():
-        lat_in = np.where(lat_mask)[0]
-        lat_min_idx = max(0, lat_in.min() - n_expand)
-        lat_max_idx = min(len(lat_vals) - 1, lat_in.max() + n_expand)
-    else:
-        # fallback: nearest points to requested bounds
-        lat_min_idx = int(np.argmin(np.abs(lat_vals - lat_lo)))
-        lat_max_idx = int(np.argmin(np.abs(lat_vals - lat_hi)))
-        if lat_min_idx > lat_max_idx:
-            lat_min_idx, lat_max_idx = lat_max_idx, lat_min_idx
-        lat_min_idx = max(0, lat_min_idx - n_expand)
-        lat_max_idx = min(len(lat_vals) - 1, lat_max_idx + n_expand)
+        mask = (axis_vals >= lo) & (axis_vals <= hi)
 
-    if lon_mask.any():
-        lon_in = np.where(lon_mask)[0]
-        lon_min_idx = max(0, lon_in.min() - n_expand)
-        lon_max_idx = min(len(lon_vals) - 1, lon_in.max() + n_expand)
-    else:
-        # fallback: nearest points to requested bounds
-        lon_min_idx = int(np.argmin(np.abs(lon_vals - lon_lo)))
-        lon_max_idx = int(np.argmin(np.abs(lon_vals - lon_hi)))
-        if lon_min_idx > lon_max_idx:
-            lon_min_idx, lon_max_idx = lon_max_idx, lon_min_idx
-        lon_min_idx = max(0, lon_min_idx - n_expand)
-        lon_max_idx = min(len(lon_vals) - 1, lon_max_idx + n_expand)
+        if mask.any():
+            axis_in = np.where(mask)[0]
+            min_idx = max(0, axis_in.min() - n_expand)
+            max_idx = min(len(axis_vals) - 1, axis_in.max() + n_expand)
+        else:
+            # Fallback: nearest points to requested bounds
+            min_idx = int(np.argmin(np.abs(axis_vals - lo)))
+            max_idx = int(np.argmin(np.abs(axis_vals - hi)))
+            if min_idx > max_idx:
+                min_idx, max_idx = max_idx, min_idx
+            min_idx = max(0, min_idx - n_expand)
+            max_idx = min(len(axis_vals) - 1, max_idx + n_expand)
 
-    lat_indices = np.arange(lat_min_idx, lat_max_idx + 1)
-    lon_indices = np.arange(lon_min_idx, lon_max_idx + 1)
+        return np.arange(min_idx, max_idx + 1)
 
-    lat_min = lat_vals[lat_min_idx]
-    lat_max = lat_vals[lat_max_idx]
-    lon_min = lon_vals[lon_min_idx]
-    lon_max = lon_vals[lon_max_idx]
+    lat_indices = compute_axis_indices(lat_vals, lat_min_req, lat_max_req)
+    lon_indices = compute_axis_indices(lon_vals, lon_min_req, lon_max_req)
+
+    lat_crop_vals = lat_vals[lat_indices]
+    lon_crop_vals = lon_vals[lon_indices]
+
+    lat_min = float(np.min(lat_crop_vals))
+    lat_max = float(np.max(lat_crop_vals))
+    lon_min = float(np.min(lon_crop_vals))
+    lon_max = float(np.max(lon_crop_vals))
 
     return lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max
 
@@ -142,10 +191,11 @@ def apply_crop(u, v, lat, lon, lat_indices, lon_indices):
     # Applies spatial crop to components and coordinates
     # Args: u, v (velocity components), lat, lon (coordinates), lat_indices, lon_indices (crop indices)
     # Returns: (u_crop, v_crop, lat_crop, lon_crop)
-    u_crop = u.isel(latitude=lat_indices, longitude=lon_indices)
-    v_crop = v.isel(latitude=lat_indices, longitude=lon_indices)
-    lat_crop = lat.isel(latitude=lat_indices)
-    lon_crop = lon.isel(longitude=lon_indices)
+    lat_dim, lon_dim = _infer_lat_lon_dims(u)
+    u_crop = u.isel({lat_dim: lat_indices, lon_dim: lon_indices})
+    v_crop = v.isel({lat_dim: lat_indices, lon_dim: lon_indices})
+    lat_crop = lat.isel({lat.dims[0]: lat_indices})
+    lon_crop = lon.isel({lon.dims[0]: lon_indices})
     
     return u_crop, v_crop, lat_crop, lon_crop
 
@@ -154,17 +204,17 @@ def ensure_dimensions(u, v):
     # Ensures components have dimensions (latitude, longitude)
     # Args: u, v (velocity components)
     # Returns: (u, v) with correct dimensions
-    if u.dims != ("latitude", "longitude"):
-        if set(u.dims) == {"latitude", "longitude"}:
-            u = u.transpose("latitude", "longitude")
-        else:
-            raise ValueError(f"Dimensoes inesperadas para u: {u.dims}")
-    
-    if v.dims != ("latitude", "longitude"):
-        if set(v.dims) == {"latitude", "longitude"}:
-            v = v.transpose("latitude", "longitude")
-        else:
-            raise ValueError(f"Dimensoes inesperadas para v: {v.dims}")
+    lat_dim_u, lon_dim_u = _infer_lat_lon_dims(u)
+    lat_dim_v, lon_dim_v = _infer_lat_lon_dims(v)
+
+    if lat_dim_u != lat_dim_v or lon_dim_u != lon_dim_v:
+        raise ValueError(f"Dimensões de u/v incompatíveis: u={u.dims}, v={v.dims}")
+
+    if u.dims != (lat_dim_u, lon_dim_u):
+        u = u.transpose(lat_dim_u, lon_dim_u)
+
+    if v.dims != (lat_dim_v, lon_dim_v):
+        v = v.transpose(lat_dim_v, lon_dim_v)
     
     return u, v
 
@@ -173,10 +223,16 @@ def align_grids(u_my, v_my, lon_my, lat_my, lon_ref, lat_ref):
     # Aligns MY grid to reference grid (NRT) through interpolation
     # Args: u_my, v_my (MY components), lon_my, lat_my (MY coordinates), lon_ref, lat_ref (reference coordinates)
     # Returns: (u_my_aligned, v_my_aligned)
-    if not (np.array_equal(lon_ref.values, lon_my.values) and 
-            np.array_equal(lat_ref.values, lat_my.values)):
-        u_my_aligned = u_my.interp(longitude=lon_ref, latitude=lat_ref)
-        v_my_aligned = v_my.interp(longitude=lon_ref, latitude=lat_ref)
+    same_lon = np.array_equal(lon_ref.values, lon_my.values)
+    same_lat = np.array_equal(lat_ref.values, lat_my.values)
+
+    if not (same_lon and same_lat):
+        lat_dim_my, lon_dim_my = _infer_lat_lon_dims(u_my)
+        lon_target = xr.DataArray(lon_ref.values, dims=[lon_dim_my])
+        lat_target = xr.DataArray(lat_ref.values, dims=[lat_dim_my])
+
+        u_my_aligned = u_my.interp({lon_dim_my: lon_target, lat_dim_my: lat_target})
+        v_my_aligned = v_my.interp({lon_dim_my: lon_target, lat_dim_my: lat_target})
     else:
         u_my_aligned = u_my
         v_my_aligned = v_my
@@ -232,7 +288,8 @@ def calculate_metrics(u_nrt, v_nrt, u_my, v_my):
 
 
 def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
-                     lon, lat, lon_min, lon_max, lat_min, lat_max, datetime_str):
+                     lon, lat, lon_min, lon_max, lat_min, lat_max, datetime_str,
+                     label_ref="NRT", label_cmp="MY"):
     # Plots comparison between NRT, MY and vector difference
     # Args: u_nrt, v_nrt (NRT components), u_my, v_my (MY aligned components), diff_u, diff_v (vector differences),
     #       lon, lat (coordinates), lon/lat_min/max (spatial limits), datetime_str (date/time string)
@@ -255,7 +312,7 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     gl1 = ax_nrt.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
     gl1.top_labels = False
     gl1.right_labels = False
-    ax_nrt.set_title('Dados NRT', fontsize=14, weight='bold')
+    ax_nrt.set_title(f'Dados {label_ref}', fontsize=14, weight='bold')
     
     # Subplot MY
     ax_my = axes[1]
@@ -268,7 +325,7 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     gl2 = ax_my.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
     gl2.top_labels = False
     gl2.right_labels = False
-    ax_my.set_title('Dados MY', fontsize=14, weight='bold')
+    ax_my.set_title(f'Dados {label_cmp}', fontsize=14, weight='bold')
     
     # Subplot Difference
     ax_diff = axes[2]
@@ -281,16 +338,180 @@ def plot_comparison(u_nrt, v_nrt, u_my, v_my, diff_u, diff_v,
     gl3 = ax_diff.gridlines(draw_labels=True, alpha=0.4, linestyle='--')
     gl3.top_labels = False
     gl3.right_labels = False
-    ax_diff.set_title('Diferença (NRT - MY)', fontsize=14, weight='bold')
+    ax_diff.set_title(f'Diferença ({label_ref} - {label_cmp})', fontsize=14, weight='bold')
     
     # Format datetime for display (replace T with space)
     datetime_display = datetime_str.replace("T", " ")
     
-    plt.suptitle(f'Comparação Vetorial - Região Selecionada ({datetime_display})', 
-                 fontsize=16, weight='bold')
+    plt.suptitle(
+        f'Comparação Vetorial - Região Selecionada ({datetime_display})\n'
+        f'{label_ref} vs {label_cmp}',
+        fontsize=16,
+        weight='bold'
+    )
     plt.tight_layout()
     
     return fig, axes
+
+
+def _prepare_comparison_fields(ref_slice, cmp_slice,
+                               lat_indices_ref, lon_indices_ref,
+                               lat_indices_cmp, lon_indices_cmp):
+    # Prepares cropped/aligned fields and metrics for a pair of time slices
+    # Args: ref_slice, cmp_slice (xarray slices), index arrays for ref/cmp crop
+    # Returns: dict with fields, grid and metrics
+    u_ref, v_ref, lon_ref, lat_ref = extract_components(ref_slice)
+    u_cmp, v_cmp, lon_cmp, lat_cmp = extract_components(cmp_slice)
+
+    u_ref, v_ref, lat_ref_c, lon_ref_c = apply_crop(
+        u_ref, v_ref, lat_ref, lon_ref, lat_indices_ref, lon_indices_ref
+    )
+    u_cmp, v_cmp, lat_cmp_c, lon_cmp_c = apply_crop(
+        u_cmp, v_cmp, lat_cmp, lon_cmp, lat_indices_cmp, lon_indices_cmp
+    )
+
+    u_ref, v_ref = ensure_dimensions(u_ref, v_ref)
+    u_cmp, v_cmp = ensure_dimensions(u_cmp, v_cmp)
+
+    u_cmp_aligned, v_cmp_aligned = align_grids(
+        u_cmp, v_cmp, lon_cmp_c, lat_cmp_c, lon_ref_c, lat_ref_c
+    )
+
+    metrics = calculate_metrics(u_ref, v_ref, u_cmp_aligned, v_cmp_aligned)
+
+    return {
+        'u_ref': u_ref,
+        'v_ref': v_ref,
+        'u_cmp_aligned': u_cmp_aligned,
+        'v_cmp_aligned': v_cmp_aligned,
+        'diff_u': metrics['diff_u'],
+        'diff_v': metrics['diff_v'],
+        'lon_ref': lon_ref_c,
+        'lat_ref': lat_ref_c,
+        'metrics': metrics,
+    }
+
+
+def generate_timestamp_evolution_gif(ref_dataset, cmp_dataset,
+                                     lat_indices_ref, lon_indices_ref,
+                                     lat_indices_cmp, lon_indices_cmp,
+                                     lon_min, lon_max, lat_min, lat_max,
+                                     label_ref, label_cmp,
+                                     fixed_cmp_time_str,
+                                     gif_start_time_str=None,
+                                     gif_end_time_str=None,
+                                     output_gif_path=None,
+                                     fps=2,
+                                     frame_stride=1,
+                                     max_frames=None):
+    # Generates a GIF by iterating reference timestamps while keeping comparison time fixed
+    # Args: datasets, crop indices, spatial bounds, labels, fixed cmp time and optional start/end window
+    # Returns: output_gif_path (str) or None
+    if output_gif_path is None:
+        output_gif_path = get_data_path(os.path.join('gifs', 'evolucao_temporal.gif'))
+
+    output_dir = os.path.dirname(output_gif_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    cmp_fixed_slice = cmp_dataset.sel(time=fixed_cmp_time_str, method="nearest")
+    fixed_cmp_time_real = str(cmp_fixed_slice.time.values).replace('T', ' ').split('.')[0]
+
+    times_ref = ref_dataset.time.values
+    if gif_start_time_str is not None:
+        start_ts = np.datetime64(gif_start_time_str)
+        times_ref = times_ref[times_ref >= start_ts]
+    if gif_end_time_str is not None:
+        end_ts = np.datetime64(gif_end_time_str)
+        times_ref = times_ref[times_ref <= end_ts]
+
+    if len(times_ref) == 0:
+        print("Nenhum timestamp encontrado no intervalo solicitado para gerar GIF.")
+        return None
+
+    frame_stride = max(1, int(frame_stride))
+    times_ref = times_ref[::frame_stride]
+
+    if max_frames is not None:
+        max_frames = max(1, int(max_frames))
+        times_ref = times_ref[:max_frames]
+
+    if len(times_ref) == 0:
+        print("Nenhum frame restante após aplicar stride/max_frames.")
+        return None
+
+    print("\n" + "=" * 60)
+    print("GERAÇÃO DE GIF TEMPORAL")
+    print("=" * 60)
+    print(f"Modelo fixo ({label_cmp}): {fixed_cmp_time_real}")
+    print(f"Frames ({label_ref} variando): {len(times_ref)}")
+    print(f"Configuração: fps={fps}, frame_stride={frame_stride}, max_frames={max_frames}")
+    print(f"Saída GIF: {output_gif_path}")
+
+    frames = []
+    frame_buffers = []
+
+    for i, time_ref in enumerate(times_ref):
+        ref_slice = ref_dataset.sel(time=time_ref, method="nearest")
+        ref_time_real = str(ref_slice.time.values).replace('T', ' ').split('.')[0]
+
+        prepared = _prepare_comparison_fields(
+            ref_slice, cmp_fixed_slice,
+            lat_indices_ref, lon_indices_ref,
+            lat_indices_cmp, lon_indices_cmp
+        )
+
+        datetime_display = f"{label_ref}: {ref_time_real} | {label_cmp} fixo: {fixed_cmp_time_real}"
+
+        fig, _ = plot_comparison(
+            prepared['u_ref'], prepared['v_ref'],
+            prepared['u_cmp_aligned'], prepared['v_cmp_aligned'],
+            prepared['diff_u'], prepared['diff_v'],
+            prepared['lon_ref'], prepared['lat_ref'],
+            lon_min, lon_max, lat_min, lat_max,
+            datetime_display,
+            label_ref=label_ref,
+            label_cmp=label_cmp
+        )
+
+        fig.text(
+            0.5, 0.01,
+            f"RMSE vetorial: {prepared['metrics']['rmse_vector']:.4f} m/s | "
+            f"Erro médio vetorial: {prepared['metrics']['mean_vector_error']:.4f} m/s",
+            ha='center', va='bottom', fontsize=10
+        )
+
+        buffer = io.BytesIO()
+        fig.savefig(buffer, format='png', dpi=120, bbox_inches='tight')
+        plt.close(fig)
+
+        buffer.seek(0)
+        frame = Image.open(buffer).convert('P', palette=Image.ADAPTIVE)
+        frames.append(frame)
+        frame_buffers.append(buffer)
+
+        print(f"  [{i+1:3d}/{len(times_ref)}] frame gerado: {ref_time_real}")
+
+    duration_ms = max(1, int(1000 / max(1, fps)))
+    frames[0].save(
+        output_gif_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=False
+    )
+
+    for frame in frames:
+        frame.close()
+    for buffer in frame_buffers:
+        buffer.close()
+
+    print("=" * 60)
+    print(f"GIF gerado com sucesso: {output_gif_path}")
+    print("=" * 60)
+
+    return output_gif_path
 
 def analyze_error_distribution(diff_u, diff_v):
     # Analyzes error distribution to explain bin frequency patterns
@@ -524,7 +745,7 @@ def plot_histogramdif(diff_u, diff_v, u_my, v_my):
     return fig
 
 
-def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
+def analyze_all_timestamps_distribution(nrt, my, lat_indices_nrt, lon_indices_nrt, lat_indices_my, lon_indices_my):
     # Iterates over all NRT timestamps and analyses if NRT-MY spatial differences
     # follow a Gaussian distribution for each instant.
     # Args: nrt, my (full xarray datasets), lat_indices, lon_indices (pre-computed crop indices)
@@ -548,8 +769,8 @@ def analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices):
             u_my,  v_my,  lon_my,  lat_my  = extract_components(my_slice)
 
             # Apply same spatial crop
-            u_nrt, v_nrt, lat_c,    lon_c    = apply_crop(u_nrt, v_nrt, lat_nrt, lon_nrt, lat_indices, lon_indices)
-            u_my,  v_my,  lat_my_c, lon_my_c = apply_crop(u_my,  v_my,  lat_my,  lon_my,  lat_indices, lon_indices)
+            u_nrt, v_nrt, lat_c,    lon_c    = apply_crop(u_nrt, v_nrt, lat_nrt, lon_nrt, lat_indices_nrt, lon_indices_nrt)
+            u_my,  v_my,  lat_my_c, lon_my_c = apply_crop(u_my,  v_my,  lat_my,  lon_my,  lat_indices_my, lon_indices_my)
 
             # Ensure correct dimensions
             u_nrt, v_nrt = ensure_dimensions(u_nrt, v_nrt)
@@ -1027,17 +1248,32 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_nrt = get_data_path('BaixadoDia4/pub03_06_03.nc')
-    file_my = get_data_path('BaixadoDia5/pub04_06_03.nc')
-    datetime_str = "2026-03-05T23:30:00"
-    lat_min_req, lat_max_req = -25.28, -25.18
-    lon_min_req, lon_max_req = -43.00, -42.70
+    file_ref = get_data_path(r'BaixadoDia4\pub03_05_03.nc')
+    file_cmp = get_data_path(r'BaixadoDia5\pub04_05_03.nc')
+    label_ref = "ANFC sem reanálise"
+    label_cmp = "ANFC com reanálise"
+    datetime_str = "2026-03-05T16:30:00"
+    lat_min_req, lat_max_req = -26.26945, -24.17135
+    lon_min_req, lon_max_req = -43.97709, -41.86002
     n_expand = 3
+
+    # GIF temporal (modelo de comparação fixo)
+    enable_temporal_gif = True
+    fixed_cmp_time_str = datetime_str
+    gif_start_time_str = "2026-03-05T00:00:00"
+    gif_end_time_str = "2026-03-06T23:59:59"
+    gif_fps = 2
+    gif_frame_stride = 1
+    gif_max_frames = 24
+    gif_output_path = get_data_path(os.path.join('gifs', 'evolucao_temporal_ref_variando_cmp_fixo.gif'))
+
+    # Estatísticas agregadas (mais custosas) - desative para focar no GIF
+    run_full_aggregated_analysis = True
     
     # 1. Load data
-    print(f"  Arquivo NRT: {file_nrt}")
-    print(f"  Arquivo MY:  {file_my}")
-    nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my = load_data(file_nrt, file_my, datetime_str)
+    print(f"  Arquivo NRT: {file_ref}")
+    print(f"  Arquivo MY:  {file_cmp}")
+    nrt, my, nrt_slice, my_slice, actual_time_nrt, actual_time_my = load_data(file_ref, file_cmp, datetime_str)
     
     # Display available timesteps
     print("\n" + "=" * 60)
@@ -1056,20 +1292,29 @@ def main():
     u_my, v_my, lon_my, lat_my = extract_components(my_slice)
     
     # 3. Calculate spatial crop
-    print(f"\nIntervalo solicitado: lat [{lat_min_req}, {lat_max_req}], "
-          f"lon [{lon_min_req}, {lon_max_req}]")
-    lat_indices, lon_indices, lat_min, lat_max, lon_min, lon_max = calculate_spatial_crop(
+    if all(v is None for v in (lat_min_req, lat_max_req, lon_min_req, lon_max_req)):
+        print("\nIntervalo solicitado: grade completa")
+    else:
+        lat_req_str = f"[{lat_min_req}, {lat_max_req}]" if (lat_min_req is not None or lat_max_req is not None) else "completo"
+        lon_req_str = f"[{lon_min_req}, {lon_max_req}]" if (lon_min_req is not None or lon_max_req is not None) else "completo"
+        print(f"\nIntervalo solicitado: lat {lat_req_str}, lon {lon_req_str}")
+    lat_indices_nrt, lon_indices_nrt, lat_min, lat_max, lon_min, lon_max = calculate_spatial_crop(
         lat, lon, lat_min_req, lat_max_req, lon_min_req, lon_max_req, n_expand
+    )
+
+    lat_indices_my, lon_indices_my, _, _, _, _ = calculate_spatial_crop(
+        lat_my, lon_my, lat_min, lat_max, lon_min, lon_max, 0
     )
     print(f"Intervalo ampliado: lat [{lat_min:.4f}, {lat_max:.4f}], "
           f"lon [{lon_min:.4f}, {lon_max:.4f}]")
-    print(f"Pontos encontrados: {len(lat_indices)} lat x {len(lon_indices)} lon")
+    print(f"Pontos encontrados NRT: {len(lat_indices_nrt)} lat x {len(lon_indices_nrt)} lon")
+    print(f"Pontos encontrados MY:  {len(lat_indices_my)} lat x {len(lon_indices_my)} lon")
     
     # 4. Apply crop
-    if len(lat_indices) > 0 and len(lon_indices) > 0:
-        u, v, lat, lon = apply_crop(u, v, lat, lon, lat_indices, lon_indices)
-        u_my, v_my, lat_my, lon_my = apply_crop(u_my, v_my, lat_my, lon_my, 
-                                                       lat_indices, lon_indices)
+    if len(lat_indices_nrt) > 0 and len(lon_indices_nrt) > 0 and len(lat_indices_my) > 0 and len(lon_indices_my) > 0:
+        u, v, lat, lon = apply_crop(u, v, lat, lon, lat_indices_nrt, lon_indices_nrt)
+        u_my, v_my, lat_my, lon_my = apply_crop(u_my, v_my, lat_my, lon_my,
+                                                lat_indices_my, lon_indices_my)
     else:
         print("AVISO: Nenhum ponto encontrado no recorte!")
         return
@@ -1088,7 +1333,8 @@ def main():
     fig, axes = plot_comparison(u, v, u_my_aligned, v_my_aligned,
                                    metrics['diff_u'], metrics['diff_v'],
                                    lon, lat, lon_min, lon_max, lat_min, lat_max,
-                                   datetime_str)
+                                   datetime_str,
+                                   label_ref=label_ref, label_cmp=label_cmp)
     
     # 9. Print information
     print_information(nrt, metrics)
@@ -1102,17 +1348,40 @@ def main():
     # 10. Plot histograms
     #fig_hist = plot_histogramdif(metrics['diff_u'], metrics['diff_v'], u_my_aligned, v_my_aligned)
 
-    # 11. Analyse distribution over all timestamps
-    ts_results = analyze_all_timestamps_distribution(nrt, my, lat_indices, lon_indices)
+    ts_results = None
+    if run_full_aggregated_analysis:
+        # 11. Analyse distribution over all timestamps
+        ts_results = analyze_all_timestamps_distribution(
+            nrt, my,
+            lat_indices_nrt, lon_indices_nrt,
+            lat_indices_my, lon_indices_my
+        )
 
-    # 12. Plot aggregated histogram across all timestamps with Gaussian fit
-    fig_agg_hist = plot_all_timestamps_histogram(ts_results)
+        # 12. Plot aggregated histogram across all timestamps with Gaussian fit
+        fig_agg_hist = plot_all_timestamps_histogram(ts_results)
 
-    # 12.1. Plot aggregated histogram of vector-by-vector angular variation
-    fig_agg_angle = plot_all_timestamps_angle_histogram(ts_results)
+        # 12.1. Plot aggregated histogram of vector-by-vector angular variation
+        fig_agg_angle = plot_all_timestamps_angle_histogram(ts_results)
 
-    # 12.2. Plot aggregated histogram of vector-by-vector magnitude variation
-    fig_agg_magnitude = plot_all_timestamps_magnitude_histogram(ts_results)
+        # 12.2. Plot aggregated histogram of vector-by-vector magnitude variation
+        fig_agg_magnitude = plot_all_timestamps_magnitude_histogram(ts_results)
+
+    # 12.3. GIF de evolução temporal (ref variando, cmp fixo)
+    if enable_temporal_gif:
+        generate_timestamp_evolution_gif(
+            nrt, my,
+            lat_indices_nrt, lon_indices_nrt,
+            lat_indices_my, lon_indices_my,
+            lon_min, lon_max, lat_min, lat_max,
+            label_ref, label_cmp,
+            fixed_cmp_time_str=fixed_cmp_time_str,
+            gif_start_time_str=gif_start_time_str,
+            gif_end_time_str=gif_end_time_str,
+            output_gif_path=gif_output_path,
+            fps=gif_fps,
+            frame_stride=gif_frame_stride,
+            max_frames=gif_max_frames
+        )
 
     # 13. Q-Q plot aggregated across all timestamps
     ##fig_qq = plot_qq_all_timestamps(ts_results)
