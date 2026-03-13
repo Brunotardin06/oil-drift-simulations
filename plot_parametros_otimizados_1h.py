@@ -51,7 +51,6 @@ def load_rows(input_dir: Path, ndigits: int) -> pd.DataFrame:
                 "wind_drift_factor": round(float(payload["wind_drift_factor"]), ndigits),
                 "current_drift_factor": round(float(payload["current_drift_factor"]), ndigits),
                 "horizontal_diffusivity": round(float(payload["horizontal_diffusivity"]), ndigits),
-                "stokes_drift": bool(payload.get("stokes_drift", False)),
                 "environment": payload.get("environment"),
                 "simulation_name": payload.get("simulation_name"),
                 "arquivo": path.name,

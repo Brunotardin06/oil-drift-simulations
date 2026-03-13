@@ -7,15 +7,47 @@ import geopandas as gpd
 from opendrift.models.openoil import OpenOil
 from opendrift.readers import reader_netCDF_CF_generic
 
+from src.infrastructure.forcing_dataset_adapter import ForcingDatasetAdapter
 from src.infrastructure.spill_repository import SpillRepository
 from utils.aux_func import generate_random_points_in_polygon
 
 
 class SimulationService:
     """Execute OpenDrift simulations using domain parameters."""
+    CURRENT_TIME_OFFSET_HOURS = -3
+    WIND_TIME_OFFSET_HOURS = -3
+    SAL_TEMP_TIME_OFFSET_HOURS = -3
 
-    def __init__(self, spill_repository: Optional[SpillRepository] = None) -> None:
+    def __init__(
+        self,
+        spill_repository: Optional[SpillRepository] = None,
+        forcing_dataset_adapter: Optional[ForcingDatasetAdapter] = None,
+    ) -> None:
         self.spill_repository = spill_repository or SpillRepository()
+        self.forcing_dataset_adapter = forcing_dataset_adapter or ForcingDatasetAdapter()
+
+    @classmethod
+    def _build_reader(
+        cls,
+        dataset_path: Path,
+        current_offset: bool = False,
+        wind_offset: bool = False,
+        sal_temp_offset: bool = False,
+    ):
+        reader = reader_netCDF_CF_generic.Reader(dataset_path)
+        if current_offset:
+            reader.shift_start_time(
+                reader.start_time + timedelta(hours=cls.CURRENT_TIME_OFFSET_HOURS)
+            )
+        if wind_offset:
+            reader.shift_start_time(
+                reader.start_time + timedelta(hours=cls.WIND_TIME_OFFSET_HOURS)
+            )
+        if sal_temp_offset:
+            reader.shift_start_time(
+                reader.start_time + timedelta(hours=cls.SAL_TEMP_TIME_OFFSET_HOURS)
+            )
+        return reader
 
     def simulate_drift(
         self,
@@ -25,16 +57,23 @@ class SimulationService:
         skip_animation,
         padding_animation_frame,
         wind_drift_factor=None,
-        stokes_drift=None,
         current_drift_factor=None,
         oil_type=None,
         horizontal_diffusivity=None,
         processes_dispersion=None,
         processes_evaporation=None,
+        forcing_source="COPERNICUS",
+        current_dataset_path=None,
+        wind_dataset_path=None,
+        current_dataset_paths=None,
+        wind_dataset_paths=None,
+        observed_offset_hours=None,
     ):
-        offset_hours = float(
-            getattr(config.copernicusmarine.specificities, "datetime_offset_hours", 0) or 0.0
-        )
+        offset_hours = observed_offset_hours
+        if offset_hours is None:
+            offset_hours = float(
+                getattr(config.copernicusmarine.specificities, "datetime_offset_hours", 0) or 0.0
+            )
         self.spill_repository.ensure_datetime_column(manchas, offset_hours=offset_hours)
         manchas.sort_values("datetime", inplace=True)
 
@@ -55,21 +94,39 @@ class SimulationService:
         )
         elements = gpd.GeoDataFrame(geometry=points, crs="EPSG:4326")
 
-        model = OpenOil(loglevel=50)
-        readers = [
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.water_dataset_path)
-            ),
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.wind_dataset_path)
-            ),
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.wave_dataset_path)
-            ),
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
-            ),
+        if current_dataset_paths:
+            current_paths = [Path(path) for path in current_dataset_paths]
+        elif current_dataset_path:
+            current_paths = [Path(current_dataset_path)]
+        else:
+            current_paths = [Path(config.copernicusmarine.specificities.water_dataset_path)]
+
+        if wind_dataset_paths:
+            wind_paths = [Path(path) for path in wind_dataset_paths]
+        elif wind_dataset_path:
+            wind_paths = [Path(wind_dataset_path)]
+        else:
+            wind_paths = []
+        forcing_source = (forcing_source or "COPERNICUS").strip().upper()
+        current_paths = [
+            self.forcing_dataset_adapter.prepare_path(path, forcing_source, "current")
+            for path in current_paths
         ]
+        wind_paths = [
+            self.forcing_dataset_adapter.prepare_path(path, forcing_source, "wind")
+            for path in wind_paths
+        ]
+
+        sal_temp_path = Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
+
+        model = OpenOil(loglevel=50)
+        current_readers = [self._build_reader(path, current_offset=True) for path in current_paths]
+        wind_readers = [self._build_reader(path, wind_offset=True) for path in wind_paths]
+        # Prioritize newer forecast runs when files overlap in time.
+        current_readers.sort(key=lambda reader: reader.start_time, reverse=True)
+        wind_readers.sort(key=lambda reader: reader.start_time, reverse=True)
+        readers = current_readers + wind_readers
+        readers.append(self._build_reader(sal_temp_path, sal_temp_offset=True))
         model.add_reader(readers)
 
         minlon, minlat, maxlon, maxlat = manchas.total_bounds
@@ -82,9 +139,8 @@ class SimulationService:
 
         print("Seeding elements...")
         model.set_config("drift:advection_scheme", "runge-kutta4")
-        if stokes_drift is None:
-            stokes_drift = getattr(config.simulation, "stokes_drift", True)
-        model.set_config("drift:stokes_drift", bool(stokes_drift))
+        # Wave effects are disabled in this project configuration.
+        model.set_config("drift:stokes_drift", False)
 
         default_wdf = 0.015
         wdf = wind_drift_factor
@@ -102,11 +158,6 @@ class SimulationService:
             model.set_config("processes:dispersion", bool(processes_dispersion))
         if processes_evaporation is not None:
             model.set_config("processes:evaporation", bool(processes_evaporation))
-        model.set_config("wave_entrainment:entrainment_rate", "Li et al. (2017)")
-        model.set_config(
-            "wave_entrainment:droplet_size_distribution",
-            "Johansen et al. (2015)",
-        )
 
         selected_oil = oil_type or getattr(config.simulation, "oil_type", "SOCKEYE SWEET")
         model.seed_from_geopandas(
@@ -154,4 +205,3 @@ class SimulationService:
             fps=6,
         )
         return model
-

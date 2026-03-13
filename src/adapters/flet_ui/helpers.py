@@ -48,10 +48,12 @@ def parse_float(value: str, field_name: str) -> float:
 
 
 def build_value_range(min_value: float, max_value: float, step: float) -> list[float]:
-    if step <= 0:
-        raise ValueError("Step must be > 0")
     if max_value < min_value:
         raise ValueError("Max must be >= Min")
+    if np.isclose(max_value, min_value):
+        return [float(min_value)]
+    if step <= 0:
+        raise ValueError("Step must be > 0 when Max > Min")
     values = np.arange(min_value, max_value + step / 2.0, step)
     return [float(value) for value in values]
 

@@ -11,9 +11,7 @@ from src.application.simulation_controller import SimulationController
 @click.option("--skip-plots", is_flag=True, default=False)
 @click.option("--evaluation", is_flag=True, default=False)
 @click.option("--optimize-wdf", is_flag=True, default=False)
-@click.option("--optimize-stokes", is_flag=True, default=False)
-@click.option("--optimize-wdf-stokes", is_flag=True, default=False)
-@click.option("--optimize-wdf-stokes-cdf", is_flag=True, default=False)
+@click.option("--optimize-wdf-cdf-hd", is_flag=True, default=False)
 @click.option("--optimize-physics", is_flag=True, default=False)
 @click.option(
     "--optimize-wdf-mode",
@@ -34,11 +32,6 @@ from src.application.simulation_controller import SimulationController
 @click.option("--padding-animation-frame", type=float, default=0.1)
 @click.option("--wind-drift-factor", type=float, default=None)
 @click.option("--current-drift-factor", type=float, default=None)
-@click.option(
-    "--stokes-drift",
-    type=click.Choice(["true", "false"], case_sensitive=False),
-    default=None,
-)
 @click.option("--horizontal-diffusivity", type=float, default=None)
 @click.option(
     "--processes-dispersion",
@@ -68,4 +61,3 @@ def simulate_validation(**kwargs):
 
 if __name__ == "__main__":
     simulate_validation()
-

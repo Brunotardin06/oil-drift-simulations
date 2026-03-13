@@ -34,6 +34,11 @@ def fast_grid_search_wind_drift_factor(
     horizontal_diffusivity=None,
     oil_type=None,
     progress=None,
+    forcing_source="COPERNICUS",
+    current_dataset_path=None,
+    wind_dataset_path=None,
+    current_dataset_paths=None,
+    wind_dataset_paths=None,
 ):
     return _optimization_service.fast_grid_search_wind_drift_factor(
         manchas=manchas,
@@ -45,10 +50,15 @@ def fast_grid_search_wind_drift_factor(
         horizontal_diffusivity=horizontal_diffusivity,
         oil_type=oil_type,
         progress=progress,
+        forcing_source=forcing_source,
+        current_dataset_path=current_dataset_path,
+        wind_dataset_path=wind_dataset_path,
+        current_dataset_paths=current_dataset_paths,
+        wind_dataset_paths=wind_dataset_paths,
     )
 
 
-def fast_grid_search_wdf_stokes_current_drift(
+def fast_grid_search_wdf_cdf_hd(
     manchas,
     config,
     observed_trajectory,
@@ -58,8 +68,13 @@ def fast_grid_search_wdf_stokes_current_drift(
     particles_per_wdf=1,
     oil_type=None,
     progress=None,
+    forcing_source="COPERNICUS",
+    current_dataset_path=None,
+    wind_dataset_path=None,
+    current_dataset_paths=None,
+    wind_dataset_paths=None,
 ):
-    return _optimization_service.fast_grid_search_wdf_stokes_current_drift(
+    return _optimization_service.fast_grid_search_wdf_cdf_hd(
         manchas=manchas,
         config=config,
         observed_trajectory=observed_trajectory,
@@ -69,5 +84,9 @@ def fast_grid_search_wdf_stokes_current_drift(
         particles_per_wdf=particles_per_wdf,
         oil_type=oil_type,
         progress=progress,
+        forcing_source=forcing_source,
+        current_dataset_path=current_dataset_path,
+        wind_dataset_path=wind_dataset_path,
+        current_dataset_paths=current_dataset_paths,
+        wind_dataset_paths=wind_dataset_paths,
     )
-
