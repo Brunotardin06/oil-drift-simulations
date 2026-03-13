@@ -48,21 +48,6 @@ def download_data(config_name, louis):
             variables=['uo', 'vo'],
         )
 
-        cm.subset(
-            dataset_id=config.copernicusmarine.wind_dataset_id,
-            minimum_longitude=config.copernicusmarine.min_long,
-            maximum_longitude=config.copernicusmarine.max_long,
-            minimum_latitude=config.copernicusmarine.min_lat,
-            maximum_latitude=config.copernicusmarine.max_lat,
-            start_datetime=str(config.copernicusmarine.start_datetime),
-            end_datetime=str(config.copernicusmarine.end_datetime),
-            output_directory=Path(config.copernicusmarine.wind_dataset_path).parent,
-            output_filename=Path(config.copernicusmarine.wind_dataset_path).name,
-            variables=['eastward_wind', 'northward_wind'],
-        )
-        
-
-
 ### LOUIS: SAME FUNCTION WITH TINY ADJUSTMENTS ###
 
 user_dict = {}
@@ -101,7 +86,7 @@ def download_data_validation(config_name, environment):
     if cm.login(username=USERNAME, password=PASSWORD, force_overwrite=True):
         print("Marine Copernicus login successful")
         if os.path.exists(config.copernicusmarine.specificities.water_dataset_path):
-            print("1/4 Um arquivo de correnteza já existe com esse nome. Por favor apague-o para poder recriá-lo")
+            print("1/2 Um arquivo de correnteza já existe com esse nome. Por favor apague-o para poder recriá-lo")
         else:
             cm.subset(
                 dataset_id=config.copernicusmarine.specificities.water_dataset_id, #Choose the corresponding environment id here
@@ -115,44 +100,10 @@ def download_data_validation(config_name, environment):
                 output_filename=Path(config.copernicusmarine.specificities.water_dataset_path).name,
                 variables=['uo', 'vo'],
             )
-            print("1/4 O arquivo de correnteza foi importado com sucesso")
-        
-        if os.path.exists(config.copernicusmarine.specificities.wind_dataset_path):
-            print("2/4 Um arquivo de vento já existe com esse nome. Por favor apague-o para poder recriá-lo")
-        else:
-            cm.subset(
-                dataset_id=config.copernicusmarine.specificities.wind_dataset_id,
-                minimum_longitude=config.copernicusmarine.min_long,
-                maximum_longitude=config.copernicusmarine.max_long,
-                minimum_latitude=config.copernicusmarine.min_lat,
-                maximum_latitude=config.copernicusmarine.max_lat,
-                start_datetime=str(config.copernicusmarine.specificities.start_datetime),
-                end_datetime=str(config.copernicusmarine.specificities.end_datetime),
-                output_directory=Path(config.copernicusmarine.specificities.wind_dataset_path).parent,
-                output_filename=Path(config.copernicusmarine.specificities.wind_dataset_path).name,
-                variables=['eastward_wind', 'northward_wind'],
-            )
-            print("2/4 O arquivo de vento foi importado com sucesso")
+            print("1/2 O arquivo de correnteza foi importado com sucesso")
 
-        if os.path.exists(config.copernicusmarine.specificities.wave_dataset_path):
-            print("3/4 Um arquivo de onda já existe com esse nome. Por favor apague-o para poder recriá-lo")
-        else:
-            cm.subset(
-            dataset_id=config.copernicusmarine.specificities.wave_dataset_id, #Choose the corresponding environment id here
-            minimum_longitude=config.copernicusmarine.min_long,
-            maximum_longitude=config.copernicusmarine.max_long,
-            minimum_latitude=config.copernicusmarine.min_lat,
-            maximum_latitude=config.copernicusmarine.max_lat,
-            start_datetime=str(config.copernicusmarine.specificities.start_datetime),
-            end_datetime=str(config.copernicusmarine.specificities.end_datetime),
-            output_directory=Path(config.copernicusmarine.specificities.wave_dataset_path).parent,
-            output_filename=Path(config.copernicusmarine.specificities.wave_dataset_path).name,
-            variables=['VSDX', 'VSDY', 'VHM0', 'VTM02', 'VTPK'],
-        )
-            print("3/4 O arquivo de onda foi importado com sucesso")
-        
         if os.path.exists(config.copernicusmarine.specificities.sal_temp_dataset_path):
-            print("4/4 Um arquivo de temperatura e salinidade já existe com esse nome. Por favor apague-o para poder recriá-lo")
+            print("2/2 Um arquivo de temperatura e salinidade já existe com esse nome. Por favor apague-o para poder recriá-lo")
         else:
             cm.subset(
             dataset_id=config.copernicusmarine.specificities.sal_temp_dataset_id, #Choose the corresponding environment id here
@@ -166,7 +117,7 @@ def download_data_validation(config_name, environment):
             output_filename=Path(config.copernicusmarine.specificities.sal_temp_dataset_path).name,
             variables=['so', 'thetao'],
         )
-            print("4/4 O arquivo de temperatura e salinidad foi importado com sucesso")
+            print("2/2 O arquivo de temperatura e salinidad foi importado com sucesso")
         
 
 if __name__ == '__main__':

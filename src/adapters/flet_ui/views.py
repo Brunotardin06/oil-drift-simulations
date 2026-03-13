@@ -26,6 +26,11 @@ def _enum_value(enum_name: str, member_name: str, fallback):
 class SetupViewBindings:
     choose_zip: Callable[[ft.ControlEvent], None]
     selected_zip_text: ft.Text
+    choose_current_dataset: Callable[[ft.ControlEvent], None]
+    selected_current_dataset_text: ft.Text
+    choose_wind_dataset: Callable[[ft.ControlEvent], None]
+    selected_wind_dataset_text: ft.Text
+    forcing_source_dropdown: ft.Dropdown
     environment_dropdown: ft.Dropdown
     copernicus_username_field: ft.TextField
     copernicus_password_field: ft.TextField
@@ -42,7 +47,6 @@ class SetupViewBindings:
     hd_min_field: ft.TextField
     hd_max_field: ft.TextField
     hd_step_field: ft.TextField
-    stokes_switch: ft.Switch
     start_execution: Callable[[ft.ControlEvent], None]
 
 
@@ -100,6 +104,44 @@ def build_setup_view(bindings: SetupViewBindings) -> ft.Container:
                                         on_click=bindings.choose_zip,
                                     ),
                                     bindings.selected_zip_text,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("Forcing Inputs (.nc)", size=28, weight=ft.FontWeight.W_600),
+                            ft.Row(
+                                spacing=12,
+                                controls=[bindings.forcing_source_dropdown],
+                            ),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    ft.OutlinedButton(
+                                        "Choose Current File(s)",
+                                        icon=_icon_value("WATER_DROP", "water_drop"),
+                                        on_click=bindings.choose_current_dataset,
+                                    ),
+                                    bindings.selected_current_dataset_text,
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    ft.OutlinedButton(
+                                        "Choose Wind File(s)",
+                                        icon=_icon_value("AIR", "air"),
+                                        on_click=bindings.choose_wind_dataset,
+                                    ),
+                                    bindings.selected_wind_dataset_text,
                                 ],
                             ),
                         ],
@@ -173,7 +215,6 @@ def build_setup_view(bindings: SetupViewBindings) -> ft.Container:
                                     bindings.hd_step_field,
                                 ],
                             ),
-                            bindings.stokes_switch,
                         ],
                     ),
                 ),
@@ -408,10 +449,9 @@ def build_sidebar(on_navigate: Callable[[str], None]) -> tuple[ft.Container, dic
             spacing=20,
             controls=[
                 ft.Text("Oil Spill Drift", size=40, weight=ft.FontWeight.W_700, color="#FFFFFF"),
-                ft.Text("Digital Twin Validation", size=18, color="#9DB0CE"),
+                ft.Text(" ", size=18, color="#9DB0CE"),
                 nav_column,
                 ft.Container(expand=True),
-                ft.Text("OpenDrift/OpenOil v2.5", color="#9DB0CE"),
             ],
         ),
     )

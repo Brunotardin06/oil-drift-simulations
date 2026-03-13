@@ -70,24 +70,6 @@ class CopernicusGateway:
         specifics = config.copernicusmarine.specificities
         return [
             {
-                "name": "water",
-                "dataset_id": specifics.water_dataset_id,
-                "dataset_path": Path(specifics.water_dataset_path),
-                "variables": ["uo", "vo"],
-            },
-            {
-                "name": "wind",
-                "dataset_id": specifics.wind_dataset_id,
-                "dataset_path": Path(specifics.wind_dataset_path),
-                "variables": ["eastward_wind", "northward_wind"],
-            },
-            {
-                "name": "wave",
-                "dataset_id": specifics.wave_dataset_id,
-                "dataset_path": Path(specifics.wave_dataset_path),
-                "variables": ["VSDX", "VSDY", "VHM0", "VTM02", "VTPK"],
-            },
-            {
                 "name": "sal_temp",
                 "dataset_id": specifics.sal_temp_dataset_id,
                 "dataset_path": Path(specifics.sal_temp_dataset_path),

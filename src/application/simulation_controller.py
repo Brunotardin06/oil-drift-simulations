@@ -66,13 +66,17 @@ class _ProgressPrinter:
 class _ValidationContext:
     config: Any
     offset_hours: float
+    forcing_source: str
+    current_dataset_path: Path
+    wind_dataset_path: Optional[Path]
+    current_dataset_paths: tuple[Path, ...]
+    wind_dataset_paths: tuple[Path, ...]
     real_manchas: Any
     plot_bounds: tuple[float, float, float, float]
     observed_trajectory: Any
     skip_animation: bool
     skip_plots: bool
-    stokes_override: Optional[bool]
-    stokes_drift: Optional[bool]
+    wave_effects_enabled: bool
     wind_drift_factor: Optional[float]
     current_drift_factor: Optional[float]
     horizontal_diffusivity: Optional[float]
@@ -105,6 +109,16 @@ class SimulationController:
             spill_repository=self.spill_repository
         )
         self.output_service = output_service or OutputService()
+
+    @staticmethod
+    def _normalize_forcing_source(value: Optional[str]) -> str:
+        source = (value or "COPERNICUS").strip().upper()
+        supported = {"COPERNICUS", "NOAA", "REMO"}
+        if source not in supported:
+            raise ValueError(
+                f"Unsupported forcing source '{value}'. Supported values: COPERNICUS, NOAA, REMO."
+            )
+        return source
 
     @staticmethod
     def _parse_float_list(value, default):
@@ -175,7 +189,7 @@ class SimulationController:
     def _build_sim_filename(
         base_name,
         wind_drift_factor=None,
-        stokes_drift=None,
+        wave_effects_enabled=None,
         current_drift_factor=None,
         horizontal_diffusivity=None,
         processes_dispersion=None,
@@ -185,8 +199,8 @@ class SimulationController:
         if wind_drift_factor is not None:
             safe_wdf = f"{wind_drift_factor:.4f}".replace(".", "p")
             sim_filename = f"{sim_filename}_wdf{safe_wdf}"
-        if stokes_drift is not None:
-            sim_filename = f"{sim_filename}_{'stokes' if stokes_drift else 'nostokes'}"
+        if wave_effects_enabled is not None:
+            sim_filename = f"{sim_filename}_{'waves' if wave_effects_enabled else 'nowaves'}"
         if current_drift_factor is not None:
             safe_cdf = f"{current_drift_factor:.2f}".replace(".", "p")
             sim_filename = f"{sim_filename}_cdf{safe_cdf}"
@@ -257,50 +271,94 @@ class SimulationController:
     def _has_overlap(a_min: float, a_max: float, b_min: float, b_max: float) -> bool:
         return not (a_max < b_min or a_min > b_max)
 
-    def _validate_environment_coverage(self, config, manchas) -> None:
+    @staticmethod
+    def _normalize_path_list(
+        singular_path: Optional[str],
+        multiple_paths: Optional[list[str]] = None,
+    ) -> list[Path]:
+        values: list[str] = []
+        if multiple_paths:
+            values.extend(str(path).strip() for path in multiple_paths if str(path).strip())
+        if singular_path and str(singular_path).strip():
+            values.append(str(singular_path).strip())
+        return list(dict.fromkeys(Path(value) for value in values))
+
+    def _validate_environment_coverage(
+        self,
+        manchas,
+        current_dataset_paths: tuple[Path, ...],
+        sal_temp_dataset_path: Path,
+        wind_dataset_paths: tuple[Path, ...] = (),
+    ) -> None:
         obs_min_lon, obs_min_lat, obs_max_lon, obs_max_lat = [float(v) for v in manchas.total_bounds]
         obs_times = pd.to_datetime(manchas["datetime"], errors="coerce").dropna()
         obs_min_time = obs_times.min() if not obs_times.empty else None
         obs_max_time = obs_times.max() if not obs_times.empty else None
 
-        required = [
-            ("water", Path(config.copernicusmarine.specificities.water_dataset_path)),
-            ("wind", Path(config.copernicusmarine.specificities.wind_dataset_path)),
+        required_groups: list[tuple[str, tuple[Path, ...]]] = [
+            ("current", tuple(current_dataset_paths)),
+            ("sal_temp", (Path(sal_temp_dataset_path),)),
         ]
-        for name, dataset_path in required:
-            if not dataset_path.exists():
-                raise ValueError(
-                    f"Required dataset not found: {dataset_path}. "
-                    f"Download environment data before execution."
-                )
-            with xr.open_dataset(dataset_path) as ds:
-                ds_min_lon, ds_max_lon = self._dataset_coord_range(ds, ("longitude", "lon", "x"))
-                ds_min_lat, ds_max_lat = self._dataset_coord_range(ds, ("latitude", "lat", "y"))
-                if not self._has_overlap(obs_min_lon, obs_max_lon, ds_min_lon, ds_max_lon) or not self._has_overlap(
-                    obs_min_lat, obs_max_lat, ds_min_lat, ds_max_lat
-                ):
-                    raise ValueError(
-                        f"Observed spill area is outside '{name}' dataset coverage. "
-                        f"Observed lon/lat=[{obs_min_lon:.5f},{obs_max_lon:.5f}] / "
-                        f"[{obs_min_lat:.5f},{obs_max_lat:.5f}], "
-                        f"dataset lon/lat=[{ds_min_lon:.5f},{ds_max_lon:.5f}] / "
-                        f"[{ds_min_lat:.5f},{ds_max_lat:.5f}]. "
-                        f"Re-download environment data for the selected observed ZIP."
-                    )
+        if wind_dataset_paths:
+            required_groups.append(("wind", tuple(wind_dataset_paths)))
 
-                if obs_min_time is not None and obs_max_time is not None and ("time" in ds.coords or "time" in ds.variables):
-                    ds_times = pd.to_datetime(ds["time"].values, errors="coerce")
-                    ds_times = ds_times[~pd.isna(ds_times)]
-                    if len(ds_times):
-                        ds_min_time = ds_times.min()
-                        ds_max_time = ds_times.max()
-                        if obs_max_time < ds_min_time or obs_min_time > ds_max_time:
-                            raise ValueError(
-                                f"Observed spill time window is outside '{name}' dataset time coverage. "
-                                f"Observed=[{obs_min_time},{obs_max_time}], "
-                                f"dataset=[{ds_min_time},{ds_max_time}]. "
-                                f"Check environment month and re-download data."
-                            )
+        for name, dataset_paths in required_groups:
+            if not dataset_paths:
+                raise ValueError(f"At least one dataset path is required for '{name}'.")
+
+            agg_min_lon = float("inf")
+            agg_max_lon = float("-inf")
+            agg_min_lat = float("inf")
+            agg_max_lat = float("-inf")
+            agg_min_time: Optional[pd.Timestamp] = None
+            agg_max_time: Optional[pd.Timestamp] = None
+
+            for dataset_path in dataset_paths:
+                if not dataset_path.exists():
+                    raise ValueError(
+                        f"Required dataset not found: {dataset_path}. "
+                        "Provide current/wind files and download sal_temp before execution."
+                    )
+                with xr.open_dataset(dataset_path) as ds:
+                    ds_min_lon, ds_max_lon = self._dataset_coord_range(ds, ("longitude", "lon", "x"))
+                    ds_min_lat, ds_max_lat = self._dataset_coord_range(ds, ("latitude", "lat", "y"))
+                    agg_min_lon = min(agg_min_lon, ds_min_lon)
+                    agg_max_lon = max(agg_max_lon, ds_max_lon)
+                    agg_min_lat = min(agg_min_lat, ds_min_lat)
+                    agg_max_lat = max(agg_max_lat, ds_max_lat)
+
+                    time_name = None
+                    for candidate in ("time", "time1"):
+                        if candidate in ds.coords or candidate in ds.variables:
+                            time_name = candidate
+                            break
+                    if time_name is not None:
+                        ds_times = pd.to_datetime(ds[time_name].values, errors="coerce")
+                        ds_times = ds_times[~pd.isna(ds_times)]
+                        if len(ds_times):
+                            ds_min_time = ds_times.min()
+                            ds_max_time = ds_times.max()
+                            agg_min_time = ds_min_time if agg_min_time is None else min(agg_min_time, ds_min_time)
+                            agg_max_time = ds_max_time if agg_max_time is None else max(agg_max_time, ds_max_time)
+
+            if not self._has_overlap(obs_min_lon, obs_max_lon, agg_min_lon, agg_max_lon) or not self._has_overlap(
+                obs_min_lat, obs_max_lat, agg_min_lat, agg_max_lat
+            ):
+                raise ValueError(
+                    f"Observed spill area is outside '{name}' dataset coverage. "
+                    f"Observed lon/lat=[{obs_min_lon:.5f},{obs_max_lon:.5f}] / "
+                    f"[{obs_min_lat:.5f},{obs_max_lat:.5f}], "
+                    f"dataset lon/lat=[{agg_min_lon:.5f},{agg_max_lon:.5f}] / "
+                    f"[{agg_min_lat:.5f},{agg_max_lat:.5f}]."
+                )
+
+            if obs_min_time is not None and obs_max_time is not None and agg_min_time is not None and agg_max_time is not None:
+                if obs_max_time < agg_min_time or obs_min_time > agg_max_time:
+                    raise ValueError(
+                        f"Observed spill time window is outside '{name}' dataset time coverage. "
+                        f"Observed=[{obs_min_time},{obs_max_time}], "
+                        f"dataset=[{agg_min_time},{agg_max_time}]."
+                    )
 
     def load_observed_spills(self, request: ObservedSpillRequest) -> ObservedSpillContext:
         manchas = gpd.read_file(Path(request.spill_path)).to_crs(epsg=4326)
@@ -328,7 +386,7 @@ class SimulationController:
     def build_observed_trajectory(self, manchas):
         return self.spill_repository.build_observed_trajectory(manchas)
 
-    def optimize_wdf_stokes_current_drift(
+    def optimize_wdf_cdf_hd(
         self,
         manchas,
         config,
@@ -340,8 +398,13 @@ class SimulationController:
         oil_type=None,
         progress=None,
         should_cancel=None,
+        forcing_source="COPERNICUS",
+        current_dataset_path=None,
+        wind_dataset_path=None,
+        current_dataset_paths=None,
+        wind_dataset_paths=None,
     ):
-        return self.optimization_service.fast_grid_search_wdf_stokes_current_drift(
+        return self.optimization_service.fast_grid_search_wdf_cdf_hd(
             manchas=manchas,
             config=config,
             observed_trajectory=observed_trajectory,
@@ -352,10 +415,15 @@ class SimulationController:
             oil_type=oil_type,
             progress=progress,
             should_cancel=should_cancel,
+            forcing_source=forcing_source,
+            current_dataset_path=current_dataset_path,
+            wind_dataset_path=wind_dataset_path,
+            current_dataset_paths=current_dataset_paths,
+            wind_dataset_paths=wind_dataset_paths,
         )
 
-    def optimize_wdf_stokes_current_drift_request(self, request: FastOptimizationRequest):
-        return self.optimize_wdf_stokes_current_drift(
+    def optimize_wdf_cdf_hd_request(self, request: FastOptimizationRequest):
+        return self.optimize_wdf_cdf_hd(
             manchas=request.manchas,
             config=request.config,
             observed_trajectory=request.observed_trajectory,
@@ -366,6 +434,11 @@ class SimulationController:
             oil_type=request.oil_type,
             progress=request.progress,
             should_cancel=getattr(request, "should_cancel", None),
+            forcing_source=request.forcing_source,
+            current_dataset_path=request.current_dataset_path,
+            wind_dataset_path=request.wind_dataset_path,
+            current_dataset_paths=request.current_dataset_paths,
+            wind_dataset_paths=request.wind_dataset_paths,
         )
 
     def run_simulation(
@@ -376,12 +449,17 @@ class SimulationController:
         skip_animation,
         padding_animation_frame,
         wind_drift_factor=None,
-        stokes_drift=None,
         current_drift_factor=None,
         oil_type=None,
         horizontal_diffusivity=None,
         processes_dispersion=None,
         processes_evaporation=None,
+        forcing_source="COPERNICUS",
+        current_dataset_path=None,
+        wind_dataset_path=None,
+        observed_offset_hours=None,
+        current_dataset_paths=None,
+        wind_dataset_paths=None,
     ):
         return self.simulation_service.simulate_drift(
             manchas=manchas,
@@ -390,12 +468,17 @@ class SimulationController:
             skip_animation=skip_animation,
             padding_animation_frame=padding_animation_frame,
             wind_drift_factor=wind_drift_factor,
-            stokes_drift=stokes_drift,
             current_drift_factor=current_drift_factor,
             oil_type=oil_type,
             horizontal_diffusivity=horizontal_diffusivity,
             processes_dispersion=processes_dispersion,
             processes_evaporation=processes_evaporation,
+            forcing_source=forcing_source,
+            current_dataset_path=current_dataset_path,
+            wind_dataset_path=wind_dataset_path,
+            current_dataset_paths=current_dataset_paths,
+            wind_dataset_paths=wind_dataset_paths,
+            observed_offset_hours=observed_offset_hours,
         )
 
     def run_simulation_request(self, request: SimulationRunRequest):
@@ -406,12 +489,17 @@ class SimulationController:
             skip_animation=request.skip_animation,
             padding_animation_frame=request.padding_animation_frame,
             wind_drift_factor=request.wind_drift_factor,
-            stokes_drift=request.stokes_drift,
             current_drift_factor=request.current_drift_factor,
             oil_type=request.oil_type,
             horizontal_diffusivity=request.horizontal_diffusivity,
             processes_dispersion=request.processes_dispersion,
             processes_evaporation=request.processes_evaporation,
+            forcing_source=request.forcing_source,
+            current_dataset_path=request.current_dataset_path,
+            wind_dataset_path=request.wind_dataset_path,
+            current_dataset_paths=request.current_dataset_paths,
+            wind_dataset_paths=request.wind_dataset_paths,
+            observed_offset_hours=request.observed_offset_hours,
         )
 
     def generate_comparison_gif(self, **kwargs):
@@ -447,9 +535,28 @@ class SimulationController:
                 max_lat=request.max_lat,
             )
         )
-        offset_hours = float(
-            getattr(config.copernicusmarine.specificities, "datetime_offset_hours", 0) or 0.0
+        forcing_source = self._normalize_forcing_source(request.forcing_source)
+        offset_hours = (
+            0.0
+            if request.disable_environment_offset
+            else float(getattr(config.copernicusmarine.specificities, "datetime_offset_hours", 0) or 0.0)
         )
+        current_paths = self._normalize_path_list(
+            request.current_dataset_path,
+            list(request.current_dataset_paths) if request.current_dataset_paths else None,
+        )
+        if not current_paths:
+            current_paths = [Path(config.copernicusmarine.specificities.water_dataset_path)]
+
+        wind_paths = self._normalize_path_list(
+            request.wind_dataset_path,
+            list(request.wind_dataset_paths) if request.wind_dataset_paths else None,
+        )
+        if not wind_paths:
+            config_wind_path = getattr(config.copernicusmarine.specificities, "wind_dataset_path", None)
+            if config_wind_path:
+                wind_paths = [Path(config_wind_path)]
+        sal_temp_dataset_path = Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
         observed_context = self.load_observed_spills(
             ObservedSpillRequest(
                 spill_path=Path(config.paths.plataformas_shp),
@@ -458,7 +565,12 @@ class SimulationController:
                 padding_animation_frame=request.padding_animation_frame,
             )
         )
-        self._validate_environment_coverage(config, observed_context.manchas)
+        self._validate_environment_coverage(
+            observed_context.manchas,
+            current_dataset_paths=tuple(current_paths),
+            wind_dataset_paths=tuple(wind_paths),
+            sal_temp_dataset_path=sal_temp_dataset_path,
+        )
 
         selected_oil_types = self._load_oil_types(request.oil_types, request.oil_types_file)
         selected_oil_type = selected_oil_types[0] if selected_oil_types else None
@@ -472,13 +584,17 @@ class SimulationController:
         return _ValidationContext(
             config=config,
             offset_hours=offset_hours,
+            forcing_source=forcing_source,
+            current_dataset_path=current_paths[0],
+            wind_dataset_path=wind_paths[0] if wind_paths else None,
+            current_dataset_paths=tuple(current_paths),
+            wind_dataset_paths=tuple(wind_paths),
             real_manchas=observed_context.manchas,
             plot_bounds=observed_context.plot_bounds,
             observed_trajectory=self.build_observed_trajectory(observed_context.manchas),
             skip_animation=skip_animation,
             skip_plots=skip_plots,
-            stokes_override=self._parse_bool_string(request.stokes_drift),
-            stokes_drift=None,
+            wave_effects_enabled=False,
             wind_drift_factor=request.wind_drift_factor,
             current_drift_factor=request.current_drift_factor,
             horizontal_diffusivity=horizontal_diffusivity,
@@ -491,13 +607,11 @@ class SimulationController:
     def _validate_supported_flags(request: ValidationRunRequest) -> None:
         if (
             request.optimize_wdf
-            or request.optimize_stokes
-            or request.optimize_wdf_stokes
             or request.optimize_physics
             or request.optimize_cdf_hd_de
         ):
             raise ValueError(
-                "This codebase was simplified. Use only --optimize-wdf-stokes-cdf "
+                "This codebase was simplified. Use only --optimize-wdf-cdf-hd "
                 "with fast mode (CDF/HD grid + fast WDF)."
             )
 
@@ -508,16 +622,14 @@ class SimulationController:
         progress_callback: Optional[Callable[[int, int], None]] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        if not request.optimize_wdf_stokes_cdf:
+        if not request.optimize_wdf_cdf_hd:
             return True
         self._check_cancelled(should_cancel)
 
-        if context.stokes_override is not None:
-            print(f"Fixing stokes_drift to {context.stokes_override} for optimization.")
         if context.wind_drift_factor is not None:
-            print("Ignoring --wind-drift-factor because --optimize-wdf-stokes-cdf is set.")
+            print("Ignoring --wind-drift-factor because --optimize-wdf-cdf-hd is set.")
         if context.current_drift_factor is not None:
-            print("Ignoring --current-drift-factor because --optimize-wdf-stokes-cdf is set.")
+            print("Ignoring --current-drift-factor because --optimize-wdf-cdf-hd is set.")
         if request.wdf_step <= 0:
             raise ValueError("wdf-step must be > 0")
         if request.wdf_max < request.wdf_min:
@@ -554,7 +666,7 @@ class SimulationController:
         total_runs = len(cdf_values) * len(hdiff_values)
         print(
             f"Will test {len(cdf_values)} cdf x {len(hdiff_values)} hd "
-            f"= {total_runs} simulations (fast; all WDFs per run, stokes fixed=False)."
+            f"= {total_runs} simulations (fast; all WDFs per run, waves disabled)."
         )
         progress = _ProgressPrinter(
             total_runs,
@@ -563,7 +675,7 @@ class SimulationController:
             on_tick=progress_callback,
             should_cancel=should_cancel,
         )
-        best_row, results_df = self.optimize_wdf_stokes_current_drift(
+        best_row, results_df = self.optimize_wdf_cdf_hd(
             manchas=context.real_manchas,
             config=context.config,
             observed_trajectory=context.observed_trajectory,
@@ -574,6 +686,11 @@ class SimulationController:
             oil_type=context.selected_oil_type,
             progress=progress,
             should_cancel=should_cancel,
+            forcing_source=context.forcing_source,
+            current_dataset_path=str(context.current_dataset_path),
+            wind_dataset_path=(str(context.wind_dataset_path) if context.wind_dataset_path else None),
+            current_dataset_paths=[str(path) for path in context.current_dataset_paths],
+            wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
         )
 
         results_name = "wdf_cdf_hd_optimization_fast"
@@ -583,7 +700,6 @@ class SimulationController:
             return False
 
         context.wind_drift_factor = float(best_row["wind_drift_factor"])
-        context.stokes_drift = False
         context.current_drift_factor = float(best_row["current_drift_factor"])
         if "horizontal_diffusivity" in best_row and pd.notna(best_row["horizontal_diffusivity"]):
             context.horizontal_diffusivity = float(best_row["horizontal_diffusivity"])
@@ -592,7 +708,7 @@ class SimulationController:
 
         summary = {
             "wind_drift_factor": context.wind_drift_factor,
-            "stokes_drift": context.stokes_drift,
+            "wave_effects_enabled": False,
             "current_drift_factor": context.current_drift_factor,
             "skillscore": float(best_row["skillscore"]),
             "wdf_min": float(request.wdf_min),
@@ -612,8 +728,7 @@ class SimulationController:
             summary["particles_per_wdf"] = int(request.fast_particles_per_wdf)
         self.workspace_repository.write_json(out_dir / f"{results_name}.json", summary)
         print(
-            f"Best wdf/stokes/cdf: {context.wind_drift_factor:.4f} "
-            f"stokes={context.stokes_drift} "
+            f"Best wdf/cdf/hd: {context.wind_drift_factor:.4f} "
             f"cdf={context.current_drift_factor:.2f} "
             f"hd={context.horizontal_diffusivity if context.horizontal_diffusivity is not None else 0.0:.2f} "
             f"oil={context.selected_oil_type or 'default'} "
@@ -629,18 +744,11 @@ class SimulationController:
     ) -> tuple[Path, Path]:
         print("Start simulation...")
         self._check_cancelled(should_cancel)
-        if (
-            context.stokes_override is not None
-            and not request.optimize_stokes
-            and not request.optimize_wdf_stokes
-            and not request.optimize_wdf_stokes_cdf
-        ):
-            context.stokes_drift = context.stokes_override
 
         sim_filename = self._build_sim_filename(
-            "sim_2019_P53_TEST_NOSTOKES_30WDF_75CDF",
+            "sim_2019_P53_TEST_NOWAVES_30WDF_75CDF",
             wind_drift_factor=context.wind_drift_factor,
-            stokes_drift=context.stokes_drift,
+            wave_effects_enabled=context.wave_effects_enabled,
             current_drift_factor=context.current_drift_factor,
             horizontal_diffusivity=context.horizontal_diffusivity,
             processes_dispersion=context.processes_dispersion,
@@ -651,15 +759,22 @@ class SimulationController:
         run_params = {
             "environment": request.environment,
             "simulation_name": context.config.simulation.name,
+            "forcing_source": context.forcing_source,
         }
         if request.start_index:
             run_params["start_index"] = int(request.start_index)
         if context.wind_drift_factor is not None:
             run_params["wind_drift_factor"] = float(context.wind_drift_factor)
-        if context.stokes_drift is not None:
-            run_params["stokes_drift"] = bool(context.stokes_drift)
+        run_params["wave_effects_enabled"] = False
         if context.current_drift_factor is not None:
             run_params["current_drift_factor"] = float(context.current_drift_factor)
+        run_params["current_dataset_path"] = str(context.current_dataset_path)
+        run_params["current_dataset_paths"] = [str(path) for path in context.current_dataset_paths]
+        if context.wind_dataset_path is not None:
+            run_params["wind_dataset_path"] = str(context.wind_dataset_path)
+        if context.wind_dataset_paths:
+            run_params["wind_dataset_paths"] = [str(path) for path in context.wind_dataset_paths]
+        run_params["observed_offset_hours"] = float(context.offset_hours)
         if context.selected_oil_type:
             run_params["oil_type"] = context.selected_oil_type
         if context.horizontal_diffusivity is not None:
@@ -680,12 +795,17 @@ class SimulationController:
                     skip_animation=context.skip_animation,
                     padding_animation_frame=request.padding_animation_frame,
                     wind_drift_factor=context.wind_drift_factor,
-                    stokes_drift=context.stokes_drift,
                     current_drift_factor=context.current_drift_factor,
                     oil_type=context.selected_oil_type,
                     horizontal_diffusivity=context.horizontal_diffusivity,
                     processes_dispersion=context.processes_dispersion,
                     processes_evaporation=context.processes_evaporation,
+                    forcing_source=context.forcing_source,
+                    current_dataset_path=str(context.current_dataset_path),
+                    wind_dataset_path=(str(context.wind_dataset_path) if context.wind_dataset_path else None),
+                    current_dataset_paths=[str(path) for path in context.current_dataset_paths],
+                    wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
+                    observed_offset_hours=float(context.offset_hours),
                 )
             )
             print(f"The results have been generated in {out_dir}")
@@ -790,7 +910,7 @@ class SimulationController:
             out_dir=out_dir,
             sim_path=sim_path,
             wind_drift_factor=context.wind_drift_factor,
-            stokes_drift=context.stokes_drift,
+            wave_effects_enabled=False,
             current_drift_factor=context.current_drift_factor,
             horizontal_diffusivity=context.horizontal_diffusivity,
             oil_type=context.selected_oil_type,

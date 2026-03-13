@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import timedelta
 from typing import Optional
 
 import numpy as np
@@ -6,20 +7,49 @@ import pandas as pd
 from opendrift.models.openoil import OpenOil
 from opendrift.readers import reader_netCDF_CF_generic
 
+from src.infrastructure.forcing_dataset_adapter import ForcingDatasetAdapter
 from src.infrastructure.spill_repository import SpillRepository
 from src.services.metrics_service import MetricsService
 
 
 class OptimizationService:
     """Run optimization loops for model parameters."""
+    CURRENT_TIME_OFFSET_HOURS = -3
+    WIND_TIME_OFFSET_HOURS = -3
+    SAL_TEMP_TIME_OFFSET_HOURS = -3
 
     def __init__(
         self,
         spill_repository: Optional[SpillRepository] = None,
         metrics_service: Optional[MetricsService] = None,
+        forcing_dataset_adapter: Optional[ForcingDatasetAdapter] = None,
     ) -> None:
         self.spill_repository = spill_repository or SpillRepository()
         self.metrics_service = metrics_service or MetricsService()
+        self.forcing_dataset_adapter = forcing_dataset_adapter or ForcingDatasetAdapter()
+
+    @classmethod
+    def _build_reader(
+        cls,
+        dataset_path: Path,
+        current_offset: bool = False,
+        wind_offset: bool = False,
+        sal_temp_offset: bool = False,
+    ):
+        reader = reader_netCDF_CF_generic.Reader(dataset_path)
+        if current_offset:
+            reader.shift_start_time(
+                reader.start_time + timedelta(hours=cls.CURRENT_TIME_OFFSET_HOURS)
+            )
+        if wind_offset:
+            reader.shift_start_time(
+                reader.start_time + timedelta(hours=cls.WIND_TIME_OFFSET_HOURS)
+            )
+        if sal_temp_offset:
+            reader.shift_start_time(
+                reader.start_time + timedelta(hours=cls.SAL_TEMP_TIME_OFFSET_HOURS)
+            )
+        return reader
 
     def fast_grid_search_wind_drift_factor(
         self,
@@ -33,6 +63,11 @@ class OptimizationService:
         oil_type=None,
         progress=None,
         should_cancel=None,
+        forcing_source="COPERNICUS",
+        current_dataset_path=None,
+        wind_dataset_path=None,
+        current_dataset_paths=None,
+        wind_dataset_paths=None,
     ):
         if should_cancel is not None and should_cancel():
             raise RuntimeError("Execution cancelled by user.")
@@ -77,21 +112,39 @@ class OptimizationService:
                 "and geometry is not Point. Provide lat/lon fields in the shapefile."
             )
 
-        model = OpenOil(loglevel=50)
-        readers = [
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.water_dataset_path)
-            ),
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.wind_dataset_path)
-            ),
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.wave_dataset_path)
-            ),
-            reader_netCDF_CF_generic.Reader(
-                Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
-            ),
+        if current_dataset_paths:
+            current_paths = [Path(path) for path in current_dataset_paths]
+        elif current_dataset_path:
+            current_paths = [Path(current_dataset_path)]
+        else:
+            current_paths = [Path(config.copernicusmarine.specificities.water_dataset_path)]
+
+        if wind_dataset_paths:
+            wind_paths = [Path(path) for path in wind_dataset_paths]
+        elif wind_dataset_path:
+            wind_paths = [Path(wind_dataset_path)]
+        else:
+            wind_paths = []
+        forcing_source = (forcing_source or "COPERNICUS").strip().upper()
+        current_paths = [
+            self.forcing_dataset_adapter.prepare_path(path, forcing_source, "current")
+            for path in current_paths
         ]
+        wind_paths = [
+            self.forcing_dataset_adapter.prepare_path(path, forcing_source, "wind")
+            for path in wind_paths
+        ]
+
+        sal_temp_path = Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
+
+        model = OpenOil(loglevel=50)
+        current_readers = [self._build_reader(path, current_offset=True) for path in current_paths]
+        wind_readers = [self._build_reader(path, wind_offset=True) for path in wind_paths]
+        # Prioritize newer forecast runs when files overlap in time.
+        current_readers.sort(key=lambda reader: reader.start_time, reverse=True)
+        wind_readers.sort(key=lambda reader: reader.start_time, reverse=True)
+        readers = current_readers + wind_readers
+        readers.append(self._build_reader(sal_temp_path, sal_temp_offset=True))
         model.add_reader(readers)
         model.set_config("drift:advection_scheme", "runge-kutta4")
         model.set_config("drift:stokes_drift", False)
@@ -99,8 +152,6 @@ class OptimizationService:
             model.set_config("seed:current_drift_factor", float(current_drift_factor))
         if horizontal_diffusivity is not None:
             model.set_config("drift:horizontal_diffusivity", float(horizontal_diffusivity))
-        model.set_config("wave_entrainment:entrainment_rate", "Li et al. (2017)")
-        model.set_config("wave_entrainment:droplet_size_distribution", "Johansen et al. (2015)")
 
         wdf_array = np.repeat(wdf_values, particles_per_wdf)
         lon_array = np.full_like(wdf_array, start_lon, dtype=float)
@@ -165,7 +216,7 @@ class OptimizationService:
             best_row = results_df.loc[results_df["skillscore"].idxmax()]
         return best_row, results_df
 
-    def fast_grid_search_wdf_stokes_current_drift(
+    def fast_grid_search_wdf_cdf_hd(
         self,
         manchas,
         config,
@@ -177,6 +228,11 @@ class OptimizationService:
         oil_type=None,
         progress=None,
         should_cancel=None,
+        forcing_source="COPERNICUS",
+        current_dataset_path=None,
+        wind_dataset_path=None,
+        current_dataset_paths=None,
+        wind_dataset_paths=None,
     ):
         if isinstance(current_drift_values, (int, float, np.floating, np.integer)):
             current_drift_values = [float(current_drift_values)]
@@ -209,12 +265,16 @@ class OptimizationService:
                     oil_type=oil_type,
                     progress=progress,
                     should_cancel=should_cancel,
+                    forcing_source=forcing_source,
+                    current_dataset_path=current_dataset_path,
+                    wind_dataset_path=wind_dataset_path,
+                    current_dataset_paths=current_dataset_paths,
+                    wind_dataset_paths=wind_dataset_paths,
                 )
                 if dataframe.empty:
                     continue
 
                 dataframe = dataframe.copy()
-                dataframe["stokes_drift"] = False
                 dataframe["current_drift_factor"] = float(current_drift_factor)
                 if horizontal_diffusivity is not None:
                     dataframe["horizontal_diffusivity"] = float(horizontal_diffusivity)

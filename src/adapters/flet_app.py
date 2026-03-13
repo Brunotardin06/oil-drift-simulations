@@ -88,6 +88,8 @@ def main(page: ft.Page) -> None:
 
     state = {
         "selected_zip": None,
+        "selected_current_datasets": [],
+        "selected_wind_datasets": [],
         "staged_zip": None,
         "run_id": None,
         "running": False,
@@ -110,7 +112,25 @@ def main(page: ft.Page) -> None:
         page.update()
 
     selected_zip_text = ft.Text("Nenhum arquivo selecionado", color="#4B6385")
+    selected_current_dataset_text = ft.Text(
+        "Nenhum arquivo selecionado (usa water_dataset_path do YAML).",
+        color="#4B6385",
+    )
+    selected_wind_dataset_text = ft.Text(
+        "Nenhum arquivo selecionado (reader de vento opcional).",
+        color="#4B6385",
+    )
     environment_download_status_text = ft.Text("Dados não baixados nesta sessão.", color="#4B6385")
+    forcing_source_dropdown = ft.Dropdown(
+        label="Forcing Source",
+        value="COPERNICUS",
+        options=[
+            ft.dropdown.Option("COPERNICUS"),
+            ft.dropdown.Option("NOAA"),
+            ft.dropdown.Option("REMO"),
+        ],
+        width=220,
+    )
 
     status_title = ft.Text("Idle", size=28, weight=ft.FontWeight.W_700, color="#0F172A")
     status_subtitle = ft.Text("Aguardando execução", size=16, color="#4B6385")
@@ -189,7 +209,6 @@ def main(page: ft.Page) -> None:
     hd_max_field = ft.TextField(label="HD max", value="10000", width=140)
     hd_step_field = ft.TextField(label="HD step", value="5000", width=140)
 
-    stokes_switch = ft.Switch(label="Stokes Drift", value=False)
     run_opt_switch = ft.Switch(label="Optimize WDF/CDF/HD", value=True)
 
     def append_log(message: str) -> None:
@@ -304,7 +323,7 @@ def main(page: ft.Page) -> None:
             environment_download_status_text.value = (
                 f"{environment}: download concluído."
             )
-            append_log(f"Environment {environment}: datasets ready.")
+            append_log(f"Environment {environment}: sal_temp dataset ready.")
             show_message(f"Download do ambiente {environment} concluído.")
         elif event_type == "env_download_error":
             state["downloading"] = False
@@ -425,6 +444,8 @@ def main(page: ft.Page) -> None:
         staged_zip: Path,
         run_id: str,
         observed_bounds: tuple[float, float, float, float],
+        current_dataset_paths: list[str],
+        wind_dataset_paths: list[str],
     ) -> ValidationRunRequest:
         optimize_enabled = bool(run_opt_switch.value)
         if optimize_enabled:
@@ -455,13 +476,14 @@ def main(page: ft.Page) -> None:
         return ValidationRunRequest(
             config_name="main",
             environment=environment_dropdown.value or "2019",
+            forcing_source=(forcing_source_dropdown.value or "COPERNICUS"),
             shp_zip=str(staged_zip),
             min_long=observed_bounds[0],
             max_long=observed_bounds[1],
             min_lat=observed_bounds[2],
             max_lat=observed_bounds[3],
             start_index=start_index,
-            optimize_wdf_stokes_cdf=optimize_enabled,
+            optimize_wdf_cdf_hd=optimize_enabled,
             optimize_wdf_mode="fast",
             fast_particles_per_wdf=1,
             wdf_min=wdf_min,
@@ -471,11 +493,15 @@ def main(page: ft.Page) -> None:
             cdf_max=cdf_max,
             cdf_step=cdf_step,
             diffusivity_values=",".join(f"{value:.6g}" for value in hd_values),
-            stokes_drift="true" if stokes_switch.value else "false",
             skip_animation=False,
             skip_simulation=False,
             skip_plots=False,
             run_name=run_id,
+            current_dataset_path=(current_dataset_paths[0] if current_dataset_paths else None),
+            wind_dataset_path=(wind_dataset_paths[0] if wind_dataset_paths else None),
+            current_dataset_paths=current_dataset_paths,
+            wind_dataset_paths=wind_dataset_paths,
+            disable_environment_offset=bool(current_dataset_paths or wind_dataset_paths),
         )
 
     def worker_run_validation(request: ValidationRunRequest) -> None:
@@ -554,6 +580,22 @@ def main(page: ft.Page) -> None:
             if not state["selected_zip"]:
                 raise ValueError("Selecione o ZIP com o spill observado.")
             source_zip = Path(state["selected_zip"])
+            selected_current_datasets = [str(path) for path in state["selected_current_datasets"]]
+            selected_wind_datasets = [str(path) for path in state["selected_wind_datasets"]]
+            if selected_current_datasets:
+                for current_dataset in selected_current_datasets:
+                    current_path = Path(current_dataset)
+                    if not current_path.exists():
+                        raise ValueError(f"Arquivo de correnteza não encontrado: {current_path}")
+            else:
+                append_log("No custom current dataset selected; falling back to YAML water_dataset_path.")
+            if selected_wind_datasets:
+                for wind_dataset in selected_wind_datasets:
+                    wind_path = Path(wind_dataset)
+                    if not wind_path.exists():
+                        raise ValueError(f"Arquivo de vento não encontrado: {wind_path}")
+            else:
+                append_log("No custom wind dataset selected; wind forcing depends on available readers.")
             has_prj = validate_observed_zip(source_zip)
             observed_bounds_raw = extract_observed_bounds(source_zip)
             observed_bounds = _expand_bounds(observed_bounds_raw)
@@ -578,6 +620,8 @@ def main(page: ft.Page) -> None:
                 staged_zip=staged_zip,
                 run_id=run_id,
                 observed_bounds=observed_bounds,
+                current_dataset_paths=selected_current_datasets,
+                wind_dataset_paths=selected_wind_datasets,
             )
         except Exception as exc:
             status_title.value = "Failed"
@@ -632,12 +676,12 @@ def main(page: ft.Page) -> None:
         status_subtitle.value = f"Baixando dados do ambiente {environment}..."
         if observed_bounds:
             append_log(
-                f"Environment {environment}: starting Copernicus download with observed bounds "
+                f"Environment {environment}: starting Copernicus sal_temp download with observed bounds "
                 f"lon=[{observed_bounds[0]:.5f},{observed_bounds[1]:.5f}] "
                 f"lat=[{observed_bounds[2]:.5f},{observed_bounds[3]:.5f}] (force overwrite)."
             )
         else:
-            append_log(f"Environment {environment}: starting Copernicus download.")
+            append_log(f"Environment {environment}: starting Copernicus sal_temp download.")
         set_screen("Execution")
         page.update()
 
@@ -683,6 +727,54 @@ def main(page: ft.Page) -> None:
     def choose_zip(e: ft.ControlEvent) -> None:
         page.run_task(choose_zip_async)
 
+    async def choose_current_dataset_async() -> None:
+        files = await file_picker.pick_files(
+            allow_multiple=True,
+            file_type=getattr(ft, "FilePickerFileType", None).CUSTOM
+            if getattr(ft, "FilePickerFileType", None) is not None
+            else "custom",
+            allowed_extensions=["nc"],
+        )
+        if not files:
+            return
+        selected_paths = [item.path for item in files if item.path]
+        if not selected_paths:
+            return
+        state["selected_current_datasets"] = selected_paths
+        selected_current_dataset_text.value = (
+            f"{len(selected_paths)} arquivo(s): " + ", ".join(Path(path).name for path in selected_paths[:3])
+        )
+        if len(selected_paths) > 3:
+            selected_current_dataset_text.value += ", ..."
+        page.update()
+
+    def choose_current_dataset(e: ft.ControlEvent) -> None:
+        page.run_task(choose_current_dataset_async)
+
+    async def choose_wind_dataset_async() -> None:
+        files = await file_picker.pick_files(
+            allow_multiple=True,
+            file_type=getattr(ft, "FilePickerFileType", None).CUSTOM
+            if getattr(ft, "FilePickerFileType", None) is not None
+            else "custom",
+            allowed_extensions=["nc"],
+        )
+        if not files:
+            return
+        selected_paths = [item.path for item in files if item.path]
+        if not selected_paths:
+            return
+        state["selected_wind_datasets"] = selected_paths
+        selected_wind_dataset_text.value = (
+            f"{len(selected_paths)} arquivo(s): " + ", ".join(Path(path).name for path in selected_paths[:3])
+        )
+        if len(selected_paths) > 3:
+            selected_wind_dataset_text.value += ", ..."
+        page.update()
+
+    def choose_wind_dataset(e: ft.ControlEvent) -> None:
+        page.run_task(choose_wind_dataset_async)
+
     file_picker = ft.FilePicker()
     page.services.append(file_picker)
 
@@ -691,6 +783,11 @@ def main(page: ft.Page) -> None:
             SetupViewBindings(
                 choose_zip=choose_zip,
                 selected_zip_text=selected_zip_text,
+                choose_current_dataset=choose_current_dataset,
+                selected_current_dataset_text=selected_current_dataset_text,
+                choose_wind_dataset=choose_wind_dataset,
+                selected_wind_dataset_text=selected_wind_dataset_text,
+                forcing_source_dropdown=forcing_source_dropdown,
                 environment_dropdown=environment_dropdown,
                 copernicus_username_field=copernicus_username_field,
                 copernicus_password_field=copernicus_password_field,
@@ -707,7 +804,6 @@ def main(page: ft.Page) -> None:
                 hd_min_field=hd_min_field,
                 hd_max_field=hd_max_field,
                 hd_step_field=hd_step_field,
-                stokes_switch=stokes_switch,
                 start_execution=start_execution,
             )
         ),
