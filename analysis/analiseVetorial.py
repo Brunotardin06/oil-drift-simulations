@@ -5,6 +5,7 @@ import cartopy.crs as crt
 from scipy import stats
 import os
 import io
+from datetime import datetime
 
 from PIL import Image
 
@@ -97,7 +98,7 @@ def extract_components(slice_data):
     # Returns: (u, v, lon, lat)
     u, v, u_name, v_name = _extract_uv_components(slice_data)
     lon, lat = _extract_lon_lat_coords(slice_data)
-    print(f"Componentes detectados: {u_name}/{v_name}")
+    #print(f"Componentes detectados: {u_name}/{v_name}")
     
     return u, v, lon, lat
 
@@ -410,9 +411,26 @@ def generate_timestamp_evolution_gif(ref_dataset, cmp_dataset,
     if output_gif_path is None:
         output_gif_path = get_data_path(os.path.join('gifs', 'evolucao_temporal.gif'))
 
+    def ensure_unique_output_path(path):
+        if not os.path.exists(path):
+            return path
+
+        base, ext = os.path.splitext(path)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = f"{base}_{timestamp}{ext}"
+        suffix = 1
+
+        while os.path.exists(candidate):
+            candidate = f"{base}_{timestamp}_{suffix:02d}{ext}"
+            suffix += 1
+
+        return candidate
+
     output_dir = os.path.dirname(output_gif_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
+
+    output_gif_path = ensure_unique_output_path(output_gif_path)
 
     cmp_fixed_slice = cmp_dataset.sel(time=fixed_cmp_time_str, method="nearest")
     fixed_cmp_time_real = str(cmp_fixed_slice.time.values).replace('T', ' ').split('.')[0]
@@ -1214,6 +1232,32 @@ def get_data_path(filename):
     data_path = os.path.join(script_dir, filename)
     return data_path
 
+
+def resolve_dataset_path(filename):
+    # Resolves dataset file path with priority to analysis/modelos
+    # Args: filename (str) - dataset file name, relative path, or absolute path
+    # Returns: absolute path to an existing file
+    if os.path.isabs(filename) and os.path.exists(filename):
+        return filename
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate_paths = [
+        os.path.join(script_dir, "modelos", filename),
+        os.path.join(script_dir, filename),
+        os.path.join(script_dir, "BaixadoDia4", filename),
+        os.path.join(script_dir, "BaixadoDia5", filename),
+    ]
+
+    for path in candidate_paths:
+        if os.path.exists(path):
+            return path
+
+    searched_paths = "\n".join(f"  - {p}" for p in candidate_paths)
+    raise FileNotFoundError(
+        f"Arquivo não encontrado: {filename}\n"
+        f"Locais buscados:\n{searched_paths}"
+    )
+
 def print_information(nrt_dataset, metrics):
     # Prints dataset information and calculated metrics
     # Args: nrt_dataset (original NRT dataset), metrics (dict with calculated metrics)
@@ -1248,23 +1292,23 @@ def main():
     # Main function - executes complete analysis
     
     # Input parameters
-    file_ref = get_data_path(r'BaixadoDia4\pub03_05_03.nc')
-    file_cmp = get_data_path(r'BaixadoDia5\pub04_05_03.nc')
-    label_ref = "ANFC sem reanálise"
-    label_cmp = "ANFC com reanálise"
-    datetime_str = "2026-03-05T16:30:00"
-    lat_min_req, lat_max_req = -26.26945, -24.17135
-    lon_min_req, lon_max_req = -43.97709, -41.86002
+    file_ref = resolve_dataset_path('corrente_cmems_mod_glo_phy_anfc_0.083deg_RUN_2025-06-12.nc')
+    file_cmp = resolve_dataset_path('corrente_remo-hycom124v2_2d_map-runs-remo_hycom124v2_2d_map_RUN_2025-06-12.nc')
+    label_ref = "ANFC"
+    label_cmp = "REMO Hycom"
+    datetime_str = "2026-06-12T00:00:00"
+    lat_min_req, lat_max_req = None, None
+    lon_min_req, lon_max_req = None, None
     n_expand = 3
 
     # GIF temporal (modelo de comparação fixo)
-    enable_temporal_gif = True
+    enable_temporal_gif = False
     fixed_cmp_time_str = datetime_str
-    gif_start_time_str = "2026-03-05T00:00:00"
-    gif_end_time_str = "2026-03-06T23:59:59"
-    gif_fps = 2
+    gif_start_time_str = "2025-06-12T00:00:00"
+    gif_end_time_str = "2025-06-16T00:00:00"
+    gif_fps = 30
     gif_frame_stride = 1
-    gif_max_frames = 24
+    gif_max_frames = 96
     gif_output_path = get_data_path(os.path.join('gifs', 'evolucao_temporal_ref_variando_cmp_fixo.gif'))
 
     # Estatísticas agregadas (mais custosas) - desative para focar no GIF
