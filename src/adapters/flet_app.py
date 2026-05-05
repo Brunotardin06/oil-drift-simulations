@@ -24,7 +24,6 @@ from src.adapters.flet_ui import (
     build_run_id,
     build_setup_view,
     build_sidebar,
-    build_value_range,
     extract_metrics,
     list_environments,
     open_path,
@@ -142,7 +141,6 @@ def main(page: ft.Page) -> None:
     result_runtime_text = ft.Text("N/A", size=26, weight=ft.FontWeight.W_600, color="#0F172A")
     best_wdf_text = ft.Text("N/A", size=24, weight=ft.FontWeight.W_600)
     best_cdf_text = ft.Text("N/A", size=24, weight=ft.FontWeight.W_600)
-    best_hd_text = ft.Text("N/A", size=24, weight=ft.FontWeight.W_600)
 
     frame_image = ft.Image(
         src=EMPTY_IMAGE_SRC,
@@ -185,7 +183,12 @@ def main(page: ft.Page) -> None:
         options=[ft.dropdown.Option(name) for name in environment_names],
         width=320,
     )
-    start_index_field = ft.TextField(label="Start index", value="0", width=180)
+    start_index_field = ft.TextField(label="Start timestep index", value="1", width=180)
+    environmental_offset_hours_field = ft.TextField(
+        label="Environmental offset range (h)",
+        value="10",
+        width=180,
+    )
     copernicus_username_field = ft.TextField(
         label="Copernicus username",
         width=320,
@@ -205,11 +208,26 @@ def main(page: ft.Page) -> None:
     cdf_max_field = ft.TextField(label="CDF max", value="1.5", width=140)
     cdf_step_field = ft.TextField(label="CDF step", value="0.1", width=140)
 
-    hd_min_field = ft.TextField(label="HD min", value="0", width=140)
-    hd_max_field = ft.TextField(label="HD max", value="10000", width=140)
-    hd_step_field = ft.TextField(label="HD step", value="5000", width=140)
+    run_opt_switch = ft.Switch(label="Optimize WDF/CDF", value=True)
 
-    run_opt_switch = ft.Switch(label="Optimize WDF/CDF/HD", value=True)
+    def build_offset_values() -> list[int]:
+        raw_value = parse_float(
+            environmental_offset_hours_field.value,
+            "Environmental offset range (h)",
+        )
+        if not raw_value.is_integer():
+            raise ValueError("Environmental offset range (h) deve ser um numero inteiro.")
+        max_offset = int(abs(raw_value))
+        if max_offset > 10:
+            raise ValueError("Environmental offset range (h) deve estar entre 0 e 10.")
+        return list(range(-max_offset, max_offset + 1))
+
+    def offset_suffix(offset_hours: int) -> str:
+        if offset_hours < 0:
+            return f"envm{abs(offset_hours):02d}"
+        if offset_hours > 0:
+            return f"envp{offset_hours:02d}"
+        return "envp00"
 
     def append_log(message: str) -> None:
         log_view.controls.append(ft.Text(message, size=13, color="#0F172A"))
@@ -277,10 +295,6 @@ def main(page: ft.Page) -> None:
         best_cdf_text.value = (
             f"{metrics['best_cdf']:.2f}" if metrics["best_cdf"] is not None else "N/A"
         )
-        best_hd_text.value = (
-            f"{metrics['best_hd']:.1f}" if metrics["best_hd"] is not None else "N/A"
-        )
-
         state["frames"] = build_frame_list(out_dir, sim_path)
         if state["frames"]:
             frame_slider.disabled = False
@@ -350,6 +364,41 @@ def main(page: ft.Page) -> None:
                     while next_pct <= pct:
                         next_pct += 5
                     state["next_progress_log_pct"] = next_pct
+        elif event_type == "batch_start":
+            index = int(payload.get("index", 0))
+            total = int(payload.get("total", 0))
+            offset = payload.get("offset")
+            run_id = payload.get("run_id", "")
+            state["run_id"] = run_id
+            state["next_progress_log_pct"] = 0
+            progress_bar.value = 0
+            progress_text.value = "0%"
+            status_title.value = "Running"
+            status_subtitle.value = (
+                f"Offset ambiental {offset:+g} h ({index}/{total})"
+                if isinstance(offset, (int, float))
+                else f"Executando lote ({index}/{total})"
+            )
+            append_log(
+                f"Starting offset {offset:+g} h ({index}/{total}) - Run ID: {run_id}"
+                if isinstance(offset, (int, float))
+                else f"Starting batch run {index}/{total} - Run ID: {run_id}"
+            )
+        elif event_type == "batch_done":
+            result: ValidationRunResult = payload["result"]
+            offset = payload.get("offset")
+            index = int(payload.get("index", 0))
+            total = int(payload.get("total", 0))
+            state["out_dir"] = result.out_dir
+            state["sim_path"] = result.sim_path
+            output_path_text.value = str(result.out_dir)
+            refresh_results()
+            refresh_artifacts()
+            append_log(
+                f"Finished offset {offset:+g} h ({index}/{total}): {result.out_dir}"
+                if isinstance(offset, (int, float))
+                else f"Finished batch run {index}/{total}: {result.out_dir}"
+            )
         elif event_type == "done":
             result: ValidationRunResult = payload["result"]
             state["running"] = False
@@ -446,6 +495,7 @@ def main(page: ft.Page) -> None:
         observed_bounds: tuple[float, float, float, float],
         current_dataset_paths: list[str],
         wind_dataset_paths: list[str],
+        environmental_offset_hours: int,
     ) -> ValidationRunRequest:
         optimize_enabled = bool(run_opt_switch.value)
         if optimize_enabled:
@@ -457,10 +507,6 @@ def main(page: ft.Page) -> None:
             cdf_max = parse_float(cdf_max_field.value, "CDF max")
             cdf_step = parse_float(cdf_step_field.value, "CDF step")
 
-            hd_min = parse_float(hd_min_field.value, "HD min")
-            hd_max = parse_float(hd_max_field.value, "HD max")
-            hd_step = parse_float(hd_step_field.value, "HD step")
-            hd_values = build_value_range(hd_min, hd_max, hd_step)
         else:
             # Ranges are not used when optimization is disabled.
             wdf_min = 0.0
@@ -469,7 +515,6 @@ def main(page: ft.Page) -> None:
             cdf_min = 0.5
             cdf_max = 1.0
             cdf_step = 0.1
-            hd_values = [0.0]
 
         start_index = int(start_index_field.value or 0)
 
@@ -483,7 +528,8 @@ def main(page: ft.Page) -> None:
             min_lat=observed_bounds[2],
             max_lat=observed_bounds[3],
             start_index=start_index,
-            optimize_wdf_cdf_hd=optimize_enabled,
+            environmental_offset_hours=float(environmental_offset_hours),
+            optimize_wdf_cdf=optimize_enabled,
             optimize_wdf_mode="fast",
             fast_particles_per_wdf=1,
             wdf_min=wdf_min,
@@ -492,7 +538,6 @@ def main(page: ft.Page) -> None:
             cdf_min=cdf_min,
             cdf_max=cdf_max,
             cdf_step=cdf_step,
-            diffusivity_values=",".join(f"{value:.6g}" for value in hd_values),
             skip_animation=False,
             skip_simulation=False,
             skip_plots=False,
@@ -504,7 +549,7 @@ def main(page: ft.Page) -> None:
             disable_environment_offset=bool(current_dataset_paths or wind_dataset_paths),
         )
 
-    def worker_run_validation(request: ValidationRunRequest) -> None:
+    def worker_run_validation(requests: list[ValidationRunRequest]) -> None:
         controller = SimulationController()
         writer = QueueWriter(event_queue)
 
@@ -512,17 +557,44 @@ def main(page: ft.Page) -> None:
             event_queue.put({"type": "progress", "done": done, "total": total})
 
         try:
-            with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                result = controller.run_validation(
-                    request,
-                    progress_callback=on_progress,
-                    should_cancel=state["cancel_event"].is_set,
-                    show_plots=False,
+            last_result = None
+            total_runs = len(requests)
+            for index, request in enumerate(requests, start=1):
+                if state["cancel_event"].is_set():
+                    event_queue.put({"type": "cancelled"})
+                    return
+                event_queue.put(
+                    {
+                        "type": "batch_start",
+                        "index": index,
+                        "total": total_runs,
+                        "run_id": request.run_name,
+                        "offset": request.environmental_offset_hours,
+                    }
                 )
-            writer.flush()
-            # If a valid result exists, treat execution as completed even if a late
-            # cancel flag was set near the end of the pipeline.
-            if result:
+                with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                    result = controller.run_validation(
+                        request,
+                        progress_callback=on_progress,
+                        should_cancel=state["cancel_event"].is_set,
+                        show_plots=False,
+                    )
+                writer.flush()
+                if not result:
+                    event_queue.put({"type": "error", "message": "No result returned from run_validation."})
+                    return
+                last_result = result
+                event_queue.put(
+                    {
+                        "type": "batch_done",
+                        "index": index,
+                        "total": total_runs,
+                        "result": result,
+                        "offset": request.environmental_offset_hours,
+                    }
+                )
+
+            if last_result:
                 if state["cancel_event"].is_set():
                     event_queue.put(
                         {
@@ -530,14 +602,12 @@ def main(page: ft.Page) -> None:
                             "message": "Cancel requested late, but outputs are complete. Finalizing as done.",
                         }
                     )
-                event_queue.put({"type": "done", "result": result})
+                event_queue.put({"type": "done", "result": last_result})
                 return
             if state["cancel_event"].is_set():
                 event_queue.put({"type": "cancelled"})
                 return
-            if not result:
-                event_queue.put({"type": "error", "message": "No result returned from run_validation."})
-                return
+            event_queue.put({"type": "error", "message": "No validation requests were executed."})
         except RuntimeError as exc:
             writer.flush()
             if "cancel" in str(exc).lower():
@@ -599,12 +669,26 @@ def main(page: ft.Page) -> None:
             has_prj = validate_observed_zip(source_zip)
             observed_bounds_raw = extract_observed_bounds(source_zip)
             observed_bounds = _expand_bounds(observed_bounds_raw)
+            offset_values = build_offset_values()
             if not has_prj:
                 append_log("Warning: observed ZIP has no .prj file.")
-            run_id = build_run_id()
-            staged_zip = stage_observed_zip(project_root, run_id, source_zip)
-            state["run_id"] = run_id
-            state["staged_zip"] = staged_zip
+            base_run_id = build_run_id()
+            requests = []
+            for offset_hours in offset_values:
+                run_id = f"{base_run_id}_{offset_suffix(offset_hours)}"
+                staged_zip = stage_observed_zip(project_root, run_id, source_zip)
+                requests.append(
+                    build_request(
+                        staged_zip=staged_zip,
+                        run_id=run_id,
+                        observed_bounds=observed_bounds,
+                        current_dataset_paths=selected_current_datasets,
+                        wind_dataset_paths=selected_wind_datasets,
+                        environmental_offset_hours=offset_hours,
+                    )
+                )
+            state["run_id"] = requests[0].run_name if requests else base_run_id
+            state["staged_zip"] = requests[0].shp_zip if requests else None
             append_log(
                 "Observed bounds (raw) "
                 f"lon=[{observed_bounds_raw[0]:.5f},{observed_bounds_raw[1]:.5f}] "
@@ -616,12 +700,9 @@ def main(page: ft.Page) -> None:
                 f"lon=[{observed_bounds[0]:.5f},{observed_bounds[1]:.5f}] "
                 f"lat=[{observed_bounds[2]:.5f},{observed_bounds[3]:.5f}]"
             )
-            request = build_request(
-                staged_zip=staged_zip,
-                run_id=run_id,
-                observed_bounds=observed_bounds,
-                current_dataset_paths=selected_current_datasets,
-                wind_dataset_paths=selected_wind_datasets,
+            append_log(
+                "Environmental offsets to run: "
+                + ", ".join(str(offset) for offset in offset_values)
             )
         except Exception as exc:
             status_title.value = "Failed"
@@ -635,11 +716,11 @@ def main(page: ft.Page) -> None:
         state["cancel_event"].clear()
         state["start_time"] = time.monotonic()
         reset_execution_panel()
-        append_log(f"Run ID: {state['run_id']}")
-        append_log(f"Staged observed ZIP: {state['staged_zip']}")
+        append_log(f"First Run ID: {state['run_id']}")
+        append_log(f"First staged observed ZIP: {state['staged_zip']}")
         page.update()
 
-        thread = threading.Thread(target=worker_run_validation, args=(request,), daemon=True)
+        thread = threading.Thread(target=worker_run_validation, args=(requests,), daemon=True)
         thread.start()
 
     def start_environment_download(e: ft.ControlEvent) -> None:
@@ -794,6 +875,7 @@ def main(page: ft.Page) -> None:
                 environment_download_status_text=environment_download_status_text,
                 download_environment_data=start_environment_download,
                 start_index_field=start_index_field,
+                environmental_offset_hours_field=environmental_offset_hours_field,
                 run_opt_switch=run_opt_switch,
                 wdf_min_field=wdf_min_field,
                 wdf_max_field=wdf_max_field,
@@ -801,9 +883,6 @@ def main(page: ft.Page) -> None:
                 cdf_min_field=cdf_min_field,
                 cdf_max_field=cdf_max_field,
                 cdf_step_field=cdf_step_field,
-                hd_min_field=hd_min_field,
-                hd_max_field=hd_max_field,
-                hd_step_field=hd_step_field,
                 start_execution=start_execution,
             )
         ),
@@ -823,7 +902,6 @@ def main(page: ft.Page) -> None:
                 result_runtime_text=result_runtime_text,
                 best_wdf_text=best_wdf_text,
                 best_cdf_text=best_cdf_text,
-                best_hd_text=best_hd_text,
                 frame_image=frame_image,
                 frame_label=frame_label,
                 frame_slider=frame_slider,

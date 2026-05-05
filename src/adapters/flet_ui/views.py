@@ -37,6 +37,7 @@ class SetupViewBindings:
     environment_download_status_text: ft.Text
     download_environment_data: Callable[[ft.ControlEvent], None]
     start_index_field: ft.TextField
+    environmental_offset_hours_field: ft.TextField
     run_opt_switch: ft.Switch
     wdf_min_field: ft.TextField
     wdf_max_field: ft.TextField
@@ -44,9 +45,6 @@ class SetupViewBindings:
     cdf_min_field: ft.TextField
     cdf_max_field: ft.TextField
     cdf_step_field: ft.TextField
-    hd_min_field: ft.TextField
-    hd_max_field: ft.TextField
-    hd_step_field: ft.TextField
     start_execution: Callable[[ft.ControlEvent], None]
 
 
@@ -66,7 +64,6 @@ class ResultsViewBindings:
     result_runtime_text: ft.Text
     best_wdf_text: ft.Text
     best_cdf_text: ft.Text
-    best_hd_text: ft.Text
     frame_image: ft.Image
     frame_label: ft.Text
     frame_slider: ft.Slider
@@ -156,7 +153,14 @@ def build_setup_view(bindings: SetupViewBindings) -> ft.Container:
                         spacing=14,
                         controls=[
                             ft.Text("Environment Configuration", size=28, weight=ft.FontWeight.W_600),
-                            ft.Row(spacing=16, controls=[bindings.environment_dropdown, bindings.start_index_field]),
+                            ft.Row(
+                                spacing=16,
+                                controls=[
+                                    bindings.environment_dropdown,
+                                    bindings.start_index_field,
+                                    bindings.environmental_offset_hours_field,
+                                ],
+                            ),
                             ft.Row(
                                 spacing=12,
                                 controls=[
@@ -204,15 +208,6 @@ def build_setup_view(bindings: SetupViewBindings) -> ft.Container:
                                     bindings.cdf_min_field,
                                     bindings.cdf_max_field,
                                     bindings.cdf_step_field,
-                                ],
-                            ),
-                            ft.Text("Horizontal Diffusion (HD)", size=20, weight=ft.FontWeight.W_600),
-                            ft.Row(
-                                spacing=12,
-                                controls=[
-                                    bindings.hd_min_field,
-                                    bindings.hd_max_field,
-                                    bindings.hd_step_field,
                                 ],
                             ),
                         ],
@@ -342,7 +337,6 @@ def build_results_view(bindings: ResultsViewBindings) -> ft.Container:
                                 controls=[
                                     ft.Column(controls=[ft.Text("WDF", color="#4B6385"), bindings.best_wdf_text]),
                                     ft.Column(controls=[ft.Text("CDF", color="#4B6385"), bindings.best_cdf_text]),
-                                    ft.Column(controls=[ft.Text("HD", color="#4B6385"), bindings.best_hd_text]),
                                 ],
                             ),
                         ],

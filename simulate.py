@@ -11,7 +11,7 @@ from src.application.simulation_controller import SimulationController
 @click.option("--skip-plots", is_flag=True, default=False)
 @click.option("--evaluation", is_flag=True, default=False)
 @click.option("--optimize-wdf", is_flag=True, default=False)
-@click.option("--optimize-wdf-cdf-hd", is_flag=True, default=False)
+@click.option("--optimize-wdf-cdf", is_flag=True, default=False)
 @click.option("--optimize-physics", is_flag=True, default=False)
 @click.option(
     "--optimize-wdf-mode",
@@ -25,14 +25,12 @@ from src.application.simulation_controller import SimulationController
 @click.option("--cdf-min", type=float, default=0.5)
 @click.option("--cdf-max", type=float, default=1.0)
 @click.option("--cdf-step", type=float, default=0.1)
-@click.option("--diffusivity-values", type=str, default=None)
 @click.option("--dispersion-values", type=str, default=None)
 @click.option("--evaporation-values", type=str, default=None)
 @click.option("--optimize-cleanup", is_flag=True, default=False)
 @click.option("--padding-animation-frame", type=float, default=0.1)
 @click.option("--wind-drift-factor", type=float, default=None)
 @click.option("--current-drift-factor", type=float, default=None)
-@click.option("--horizontal-diffusivity", type=float, default=None)
 @click.option(
     "--processes-dispersion",
     type=click.Choice(["true", "false"], case_sensitive=False),
@@ -52,7 +50,7 @@ from src.application.simulation_controller import SimulationController
 @click.option("--min-lat", type=float, default=None)
 @click.option("--max-lat", type=float, default=None)
 @click.option("--start-index", type=int, default=0)
-@click.option("--optimize-cdf-hd-de", is_flag=True, default=False)
+@click.option("--environmental-offset-hours", type=float, default=None)
 def simulate_validation(**kwargs):
     controller = SimulationController()
     request = ValidationRunRequest(**kwargs)

@@ -33,20 +33,22 @@ class SimulationService:
         current_offset: bool = False,
         wind_offset: bool = False,
         sal_temp_offset: bool = False,
+        environmental_offset_hours: Optional[float] = None,
     ):
         reader = reader_netCDF_CF_generic.Reader(dataset_path)
+        offset_hours = None
         if current_offset:
-            reader.shift_start_time(
-                reader.start_time + timedelta(hours=cls.CURRENT_TIME_OFFSET_HOURS)
-            )
+            offset_hours = cls.CURRENT_TIME_OFFSET_HOURS
         if wind_offset:
-            reader.shift_start_time(
-                reader.start_time + timedelta(hours=cls.WIND_TIME_OFFSET_HOURS)
-            )
+            offset_hours = cls.WIND_TIME_OFFSET_HOURS
         if sal_temp_offset:
-            reader.shift_start_time(
-                reader.start_time + timedelta(hours=cls.SAL_TEMP_TIME_OFFSET_HOURS)
-            )
+            offset_hours = cls.SAL_TEMP_TIME_OFFSET_HOURS
+        if environmental_offset_hours is not None and (
+            current_offset or wind_offset or sal_temp_offset
+        ):
+            offset_hours = float(environmental_offset_hours)
+        if offset_hours:
+            reader.shift_start_time(reader.start_time + timedelta(hours=float(offset_hours)))
         return reader
 
     def simulate_drift(
@@ -59,7 +61,6 @@ class SimulationService:
         wind_drift_factor=None,
         current_drift_factor=None,
         oil_type=None,
-        horizontal_diffusivity=None,
         processes_dispersion=None,
         processes_evaporation=None,
         forcing_source="COPERNICUS",
@@ -68,6 +69,7 @@ class SimulationService:
         current_dataset_paths=None,
         wind_dataset_paths=None,
         observed_offset_hours=None,
+        environmental_offset_hours=None,
     ):
         offset_hours = observed_offset_hours
         if offset_hours is None:
@@ -120,13 +122,33 @@ class SimulationService:
         sal_temp_path = Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
 
         model = OpenOil(loglevel=50)
-        current_readers = [self._build_reader(path, current_offset=True) for path in current_paths]
-        wind_readers = [self._build_reader(path, wind_offset=True) for path in wind_paths]
+        current_readers = [
+            self._build_reader(
+                path,
+                current_offset=True,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+            for path in current_paths
+        ]
+        wind_readers = [
+            self._build_reader(
+                path,
+                wind_offset=True,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+            for path in wind_paths
+        ]
         # Prioritize newer forecast runs when files overlap in time.
         current_readers.sort(key=lambda reader: reader.start_time, reverse=True)
         wind_readers.sort(key=lambda reader: reader.start_time, reverse=True)
         readers = current_readers + wind_readers
-        readers.append(self._build_reader(sal_temp_path, sal_temp_offset=True))
+        readers.append(
+            self._build_reader(
+                sal_temp_path,
+                sal_temp_offset=True,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+        )
         model.add_reader(readers)
 
         minlon, minlat, maxlon, maxlat = manchas.total_bounds
@@ -152,8 +174,6 @@ class SimulationService:
             current_drift_factor = getattr(config.simulation, "current_drift_factor", None)
         if current_drift_factor is not None:
             model.set_config("seed:current_drift_factor", float(current_drift_factor))
-        if horizontal_diffusivity is not None:
-            model.set_config("drift:horizontal_diffusivity", float(horizontal_diffusivity))
         if processes_dispersion is not None:
             model.set_config("processes:dispersion", bool(processes_dispersion))
         if processes_evaporation is not None:

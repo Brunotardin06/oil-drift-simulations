@@ -35,20 +35,22 @@ class OptimizationService:
         current_offset: bool = False,
         wind_offset: bool = False,
         sal_temp_offset: bool = False,
+        environmental_offset_hours: Optional[float] = None,
     ):
         reader = reader_netCDF_CF_generic.Reader(dataset_path)
+        offset_hours = None
         if current_offset:
-            reader.shift_start_time(
-                reader.start_time + timedelta(hours=cls.CURRENT_TIME_OFFSET_HOURS)
-            )
+            offset_hours = cls.CURRENT_TIME_OFFSET_HOURS
         if wind_offset:
-            reader.shift_start_time(
-                reader.start_time + timedelta(hours=cls.WIND_TIME_OFFSET_HOURS)
-            )
+            offset_hours = cls.WIND_TIME_OFFSET_HOURS
         if sal_temp_offset:
-            reader.shift_start_time(
-                reader.start_time + timedelta(hours=cls.SAL_TEMP_TIME_OFFSET_HOURS)
-            )
+            offset_hours = cls.SAL_TEMP_TIME_OFFSET_HOURS
+        if environmental_offset_hours is not None and (
+            current_offset or wind_offset or sal_temp_offset
+        ):
+            offset_hours = float(environmental_offset_hours)
+        if offset_hours:
+            reader.shift_start_time(reader.start_time + timedelta(hours=float(offset_hours)))
         return reader
 
     def fast_grid_search_wind_drift_factor(
@@ -59,7 +61,6 @@ class OptimizationService:
         wdf_values,
         particles_per_wdf=1,
         current_drift_factor=None,
-        horizontal_diffusivity=None,
         oil_type=None,
         progress=None,
         should_cancel=None,
@@ -68,6 +69,7 @@ class OptimizationService:
         wind_dataset_path=None,
         current_dataset_paths=None,
         wind_dataset_paths=None,
+        environmental_offset_hours=None,
     ):
         if should_cancel is not None and should_cancel():
             raise RuntimeError("Execution cancelled by user.")
@@ -106,10 +108,14 @@ class OptimizationService:
         elif hasattr(shape_inicial, "geometry") and shape_inicial.geometry.geom_type == "Point":
             start_lat = float(shape_inicial.geometry.y)
             start_lon = float(shape_inicial.geometry.x)
+        elif hasattr(shape_inicial, "geometry") and shape_inicial.geometry is not None:
+            point = shape_inicial.geometry.representative_point()
+            start_lat = float(point.y)
+            start_lon = float(point.x)
         else:
             raise ValueError(
                 "Latitude/Longitude columns not found (e.g., Latitude/Longitude or lat/lon) "
-                "and geometry is not Point. Provide lat/lon fields in the shapefile."
+                "and geometry is missing. Provide lat/lon fields in the shapefile."
             )
 
         if current_dataset_paths:
@@ -138,20 +144,38 @@ class OptimizationService:
         sal_temp_path = Path(config.copernicusmarine.specificities.sal_temp_dataset_path)
 
         model = OpenOil(loglevel=50)
-        current_readers = [self._build_reader(path, current_offset=True) for path in current_paths]
-        wind_readers = [self._build_reader(path, wind_offset=True) for path in wind_paths]
+        current_readers = [
+            self._build_reader(
+                path,
+                current_offset=True,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+            for path in current_paths
+        ]
+        wind_readers = [
+            self._build_reader(
+                path,
+                wind_offset=True,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+            for path in wind_paths
+        ]
         # Prioritize newer forecast runs when files overlap in time.
         current_readers.sort(key=lambda reader: reader.start_time, reverse=True)
         wind_readers.sort(key=lambda reader: reader.start_time, reverse=True)
         readers = current_readers + wind_readers
-        readers.append(self._build_reader(sal_temp_path, sal_temp_offset=True))
+        readers.append(
+            self._build_reader(
+                sal_temp_path,
+                sal_temp_offset=True,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+        )
         model.add_reader(readers)
         model.set_config("drift:advection_scheme", "runge-kutta4")
         model.set_config("drift:stokes_drift", False)
         if current_drift_factor is not None:
             model.set_config("seed:current_drift_factor", float(current_drift_factor))
-        if horizontal_diffusivity is not None:
-            model.set_config("drift:horizontal_diffusivity", float(horizontal_diffusivity))
 
         wdf_array = np.repeat(wdf_values, particles_per_wdf)
         lon_array = np.full_like(wdf_array, start_lon, dtype=float)
@@ -168,9 +192,13 @@ class OptimizationService:
         model.prepare_run()
         if should_cancel is not None and should_cancel():
             raise RuntimeError("Execution cancelled by user.")
+        optimization_time_step_minutes = max(
+            5.0,
+            float(getattr(config.simulation, "time_step_minutes", 1.0) or 1.0),
+        )
         model.run(
             end_time=end_time,
-            time_step=config.simulation.time_step_minutes * 60,
+            time_step=optimization_time_step_minutes * 60,
             time_step_output=config.simulation.output_time_step_minutes * 60,
         )
         if progress is not None:
@@ -216,14 +244,13 @@ class OptimizationService:
             best_row = results_df.loc[results_df["skillscore"].idxmax()]
         return best_row, results_df
 
-    def fast_grid_search_wdf_cdf_hd(
+    def fast_grid_search_wdf_cdf(
         self,
         manchas,
         config,
         observed_trajectory,
         wdf_values,
         current_drift_values,
-        horizontal_diffusivity_values=None,
         particles_per_wdf=1,
         oil_type=None,
         progress=None,
@@ -233,6 +260,7 @@ class OptimizationService:
         wind_dataset_path=None,
         current_dataset_paths=None,
         wind_dataset_paths=None,
+        environmental_offset_hours=None,
     ):
         if isinstance(current_drift_values, (int, float, np.floating, np.integer)):
             current_drift_values = [float(current_drift_values)]
@@ -240,45 +268,33 @@ class OptimizationService:
         if not current_drift_values:
             raise ValueError("current_drift_values must contain at least one value")
 
-        if horizontal_diffusivity_values is None:
-            horizontal_diffusivity_values = [None]
-        elif isinstance(horizontal_diffusivity_values, (int, float, np.floating, np.integer)):
-            horizontal_diffusivity_values = [float(horizontal_diffusivity_values)]
-        else:
-            horizontal_diffusivity_values = [float(value) for value in horizontal_diffusivity_values]
-        if not horizontal_diffusivity_values:
-            raise ValueError("horizontal_diffusivity_values must contain at least one value")
-
         results = []
         for current_drift_factor in current_drift_values:
-            for horizontal_diffusivity in horizontal_diffusivity_values:
-                if should_cancel is not None and should_cancel():
-                    raise RuntimeError("Execution cancelled by user.")
-                _, dataframe = self.fast_grid_search_wind_drift_factor(
-                    manchas,
-                    config,
-                    observed_trajectory,
-                    wdf_values,
-                    particles_per_wdf=particles_per_wdf,
-                    current_drift_factor=current_drift_factor,
-                    horizontal_diffusivity=horizontal_diffusivity,
-                    oil_type=oil_type,
-                    progress=progress,
-                    should_cancel=should_cancel,
-                    forcing_source=forcing_source,
-                    current_dataset_path=current_dataset_path,
-                    wind_dataset_path=wind_dataset_path,
-                    current_dataset_paths=current_dataset_paths,
-                    wind_dataset_paths=wind_dataset_paths,
-                )
-                if dataframe.empty:
-                    continue
+            if should_cancel is not None and should_cancel():
+                raise RuntimeError("Execution cancelled by user.")
+            _, dataframe = self.fast_grid_search_wind_drift_factor(
+                manchas,
+                config,
+                observed_trajectory,
+                wdf_values,
+                particles_per_wdf=particles_per_wdf,
+                current_drift_factor=current_drift_factor,
+                oil_type=oil_type,
+                progress=progress,
+                should_cancel=should_cancel,
+                forcing_source=forcing_source,
+                current_dataset_path=current_dataset_path,
+                wind_dataset_path=wind_dataset_path,
+                current_dataset_paths=current_dataset_paths,
+                wind_dataset_paths=wind_dataset_paths,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+            if dataframe.empty:
+                continue
 
-                dataframe = dataframe.copy()
-                dataframe["current_drift_factor"] = float(current_drift_factor)
-                if horizontal_diffusivity is not None:
-                    dataframe["horizontal_diffusivity"] = float(horizontal_diffusivity)
-                results.append(dataframe)
+            dataframe = dataframe.copy()
+            dataframe["current_drift_factor"] = float(current_drift_factor)
+            results.append(dataframe)
 
         results_df = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
         best_row = None

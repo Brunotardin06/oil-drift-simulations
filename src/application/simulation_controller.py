@@ -66,6 +66,7 @@ class _ProgressPrinter:
 class _ValidationContext:
     config: Any
     offset_hours: float
+    environmental_offset_hours: float
     forcing_source: str
     current_dataset_path: Path
     wind_dataset_path: Optional[Path]
@@ -74,12 +75,12 @@ class _ValidationContext:
     real_manchas: Any
     plot_bounds: tuple[float, float, float, float]
     observed_trajectory: Any
+    start_index: int
     skip_animation: bool
     skip_plots: bool
     wave_effects_enabled: bool
     wind_drift_factor: Optional[float]
     current_drift_factor: Optional[float]
-    horizontal_diffusivity: Optional[float]
     processes_dispersion: Optional[bool]
     processes_evaporation: Optional[bool]
     selected_oil_type: Optional[str]
@@ -87,6 +88,9 @@ class _ValidationContext:
 
 class SimulationController:
     """Orchestrate repositories and services for full simulation workflows."""
+
+    DEFAULT_ENVIRONMENTAL_OFFSET_HOURS = -3.0
+    MAX_ENVIRONMENTAL_OFFSET_HOURS = 10.0
 
     def __init__(
         self,
@@ -191,7 +195,6 @@ class SimulationController:
         wind_drift_factor=None,
         wave_effects_enabled=None,
         current_drift_factor=None,
-        horizontal_diffusivity=None,
         processes_dispersion=None,
         processes_evaporation=None,
     ):
@@ -204,9 +207,6 @@ class SimulationController:
         if current_drift_factor is not None:
             safe_cdf = f"{current_drift_factor:.2f}".replace(".", "p")
             sim_filename = f"{sim_filename}_cdf{safe_cdf}"
-        if horizontal_diffusivity is not None:
-            safe_hdiff = f"{horizontal_diffusivity:.2f}".replace(".", "p")
-            sim_filename = f"{sim_filename}_hd{safe_hdiff}"
         if processes_dispersion is not None:
             sim_filename = f"{sim_filename}_{'disp' if processes_dispersion else 'nodisp'}"
         if processes_evaporation is not None:
@@ -289,6 +289,7 @@ class SimulationController:
         current_dataset_paths: tuple[Path, ...],
         sal_temp_dataset_path: Path,
         wind_dataset_paths: tuple[Path, ...] = (),
+        environmental_offset_hours: float = 0.0,
     ) -> None:
         obs_min_lon, obs_min_lat, obs_max_lon, obs_max_lat = [float(v) for v in manchas.total_bounds]
         obs_times = pd.to_datetime(manchas["datetime"], errors="coerce").dropna()
@@ -336,6 +337,8 @@ class SimulationController:
                         ds_times = pd.to_datetime(ds[time_name].values, errors="coerce")
                         ds_times = ds_times[~pd.isna(ds_times)]
                         if len(ds_times):
+                            if environmental_offset_hours:
+                                ds_times = ds_times + pd.Timedelta(hours=float(environmental_offset_hours))
                             ds_min_time = ds_times.min()
                             ds_max_time = ds_times.max()
                             agg_min_time = ds_min_time if agg_min_time is None else min(agg_min_time, ds_min_time)
@@ -386,14 +389,13 @@ class SimulationController:
     def build_observed_trajectory(self, manchas):
         return self.spill_repository.build_observed_trajectory(manchas)
 
-    def optimize_wdf_cdf_hd(
+    def optimize_wdf_cdf(
         self,
         manchas,
         config,
         observed_trajectory,
         wdf_values,
         current_drift_values,
-        horizontal_diffusivity_values=None,
         particles_per_wdf=1,
         oil_type=None,
         progress=None,
@@ -403,14 +405,14 @@ class SimulationController:
         wind_dataset_path=None,
         current_dataset_paths=None,
         wind_dataset_paths=None,
+        environmental_offset_hours=None,
     ):
-        return self.optimization_service.fast_grid_search_wdf_cdf_hd(
+        return self.optimization_service.fast_grid_search_wdf_cdf(
             manchas=manchas,
             config=config,
             observed_trajectory=observed_trajectory,
             wdf_values=wdf_values,
             current_drift_values=current_drift_values,
-            horizontal_diffusivity_values=horizontal_diffusivity_values,
             particles_per_wdf=particles_per_wdf,
             oil_type=oil_type,
             progress=progress,
@@ -420,16 +422,16 @@ class SimulationController:
             wind_dataset_path=wind_dataset_path,
             current_dataset_paths=current_dataset_paths,
             wind_dataset_paths=wind_dataset_paths,
+            environmental_offset_hours=environmental_offset_hours,
         )
 
-    def optimize_wdf_cdf_hd_request(self, request: FastOptimizationRequest):
-        return self.optimize_wdf_cdf_hd(
+    def optimize_wdf_cdf_request(self, request: FastOptimizationRequest):
+        return self.optimize_wdf_cdf(
             manchas=request.manchas,
             config=request.config,
             observed_trajectory=request.observed_trajectory,
             wdf_values=request.wdf_values,
             current_drift_values=request.current_drift_values,
-            horizontal_diffusivity_values=request.horizontal_diffusivity_values,
             particles_per_wdf=request.particles_per_wdf,
             oil_type=request.oil_type,
             progress=request.progress,
@@ -439,6 +441,7 @@ class SimulationController:
             wind_dataset_path=request.wind_dataset_path,
             current_dataset_paths=request.current_dataset_paths,
             wind_dataset_paths=request.wind_dataset_paths,
+            environmental_offset_hours=request.environmental_offset_hours,
         )
 
     def run_simulation(
@@ -451,7 +454,6 @@ class SimulationController:
         wind_drift_factor=None,
         current_drift_factor=None,
         oil_type=None,
-        horizontal_diffusivity=None,
         processes_dispersion=None,
         processes_evaporation=None,
         forcing_source="COPERNICUS",
@@ -460,6 +462,7 @@ class SimulationController:
         observed_offset_hours=None,
         current_dataset_paths=None,
         wind_dataset_paths=None,
+        environmental_offset_hours=None,
     ):
         return self.simulation_service.simulate_drift(
             manchas=manchas,
@@ -470,7 +473,6 @@ class SimulationController:
             wind_drift_factor=wind_drift_factor,
             current_drift_factor=current_drift_factor,
             oil_type=oil_type,
-            horizontal_diffusivity=horizontal_diffusivity,
             processes_dispersion=processes_dispersion,
             processes_evaporation=processes_evaporation,
             forcing_source=forcing_source,
@@ -479,6 +481,7 @@ class SimulationController:
             current_dataset_paths=current_dataset_paths,
             wind_dataset_paths=wind_dataset_paths,
             observed_offset_hours=observed_offset_hours,
+            environmental_offset_hours=environmental_offset_hours,
         )
 
     def run_simulation_request(self, request: SimulationRunRequest):
@@ -491,7 +494,6 @@ class SimulationController:
             wind_drift_factor=request.wind_drift_factor,
             current_drift_factor=request.current_drift_factor,
             oil_type=request.oil_type,
-            horizontal_diffusivity=request.horizontal_diffusivity,
             processes_dispersion=request.processes_dispersion,
             processes_evaporation=request.processes_evaporation,
             forcing_source=request.forcing_source,
@@ -500,6 +502,7 @@ class SimulationController:
             current_dataset_paths=request.current_dataset_paths,
             wind_dataset_paths=request.wind_dataset_paths,
             observed_offset_hours=request.observed_offset_hours,
+            environmental_offset_hours=request.environmental_offset_hours,
         )
 
     def generate_comparison_gif(self, **kwargs):
@@ -513,6 +516,7 @@ class SimulationController:
             extent=request.extent,
             datetime_offset_hours=request.datetime_offset_hours,
             real_steps=request.real_steps,
+            start_index=request.start_index,
         )
 
     def _build_validation_context(self, request: ValidationRunRequest) -> _ValidationContext:
@@ -541,6 +545,16 @@ class SimulationController:
             if request.disable_environment_offset
             else float(getattr(config.copernicusmarine.specificities, "datetime_offset_hours", 0) or 0.0)
         )
+        environmental_offset_hours = (
+            self.DEFAULT_ENVIRONMENTAL_OFFSET_HOURS
+            if request.environmental_offset_hours is None
+            else float(request.environmental_offset_hours)
+        )
+        if abs(environmental_offset_hours) > self.MAX_ENVIRONMENTAL_OFFSET_HOURS:
+            raise ValueError(
+                f"environmental-offset-hours must be between "
+                f"-{self.MAX_ENVIRONMENTAL_OFFSET_HOURS:g} and {self.MAX_ENVIRONMENTAL_OFFSET_HOURS:g}"
+            )
         current_paths = self._normalize_path_list(
             request.current_dataset_path,
             list(request.current_dataset_paths) if request.current_dataset_paths else None,
@@ -570,20 +584,16 @@ class SimulationController:
             current_dataset_paths=tuple(current_paths),
             wind_dataset_paths=tuple(wind_paths),
             sal_temp_dataset_path=sal_temp_dataset_path,
+            environmental_offset_hours=environmental_offset_hours,
         )
 
         selected_oil_types = self._load_oil_types(request.oil_types, request.oil_types_file)
         selected_oil_type = selected_oil_types[0] if selected_oil_types else None
 
-        horizontal_diffusivity = (
-            float(request.horizontal_diffusivity)
-            if request.horizontal_diffusivity is not None
-            else None
-        )
-
         return _ValidationContext(
             config=config,
             offset_hours=offset_hours,
+            environmental_offset_hours=environmental_offset_hours,
             forcing_source=forcing_source,
             current_dataset_path=current_paths[0],
             wind_dataset_path=wind_paths[0] if wind_paths else None,
@@ -592,12 +602,12 @@ class SimulationController:
             real_manchas=observed_context.manchas,
             plot_bounds=observed_context.plot_bounds,
             observed_trajectory=self.build_observed_trajectory(observed_context.manchas),
+            start_index=int(request.start_index),
             skip_animation=skip_animation,
             skip_plots=skip_plots,
             wave_effects_enabled=False,
             wind_drift_factor=request.wind_drift_factor,
             current_drift_factor=request.current_drift_factor,
-            horizontal_diffusivity=horizontal_diffusivity,
             processes_dispersion=self._parse_bool_string(request.processes_dispersion),
             processes_evaporation=self._parse_bool_string(request.processes_evaporation),
             selected_oil_type=selected_oil_type,
@@ -608,11 +618,10 @@ class SimulationController:
         if (
             request.optimize_wdf
             or request.optimize_physics
-            or request.optimize_cdf_hd_de
         ):
             raise ValueError(
-                "This codebase was simplified. Use only --optimize-wdf-cdf-hd "
-                "with fast mode (CDF/HD grid + fast WDF)."
+                "This codebase was simplified. Use only --optimize-wdf-cdf "
+                "with fast mode."
             )
 
     def _run_fast_optimization_phase(
@@ -622,14 +631,14 @@ class SimulationController:
         progress_callback: Optional[Callable[[int, int], None]] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        if not request.optimize_wdf_cdf_hd:
+        if not request.optimize_wdf_cdf:
             return True
         self._check_cancelled(should_cancel)
 
         if context.wind_drift_factor is not None:
-            print("Ignoring --wind-drift-factor because --optimize-wdf-cdf-hd is set.")
+            print("Ignoring --wind-drift-factor because --optimize-wdf-cdf is set.")
         if context.current_drift_factor is not None:
-            print("Ignoring --current-drift-factor because --optimize-wdf-cdf-hd is set.")
+            print("Ignoring --current-drift-factor because --optimize-wdf-cdf is set.")
         if request.wdf_step <= 0:
             raise ValueError("wdf-step must be > 0")
         if request.wdf_max < request.wdf_min:
@@ -649,13 +658,6 @@ class SimulationController:
             request.cdf_max + (request.cdf_step / 2),
             request.cdf_step,
         )
-        if request.diffusivity_values is not None:
-            hdiff_values = self._parse_float_list(request.diffusivity_values, [0.0])
-        elif context.horizontal_diffusivity is not None:
-            hdiff_values = [float(context.horizontal_diffusivity)]
-        else:
-            hdiff_values = [0.0]
-
         out_dir = self.workspace_repository.simulation_output_dir(context.config)
         mode = request.optimize_wdf_mode.lower()
         if mode != "fast":
@@ -663,10 +665,18 @@ class SimulationController:
         if request.optimize_cleanup:
             print("Note: --optimize-cleanup is ignored in fast mode.")
 
-        total_runs = len(cdf_values) * len(hdiff_values)
+        total_runs = len(cdf_values)
         print(
-            f"Will test {len(cdf_values)} cdf x {len(hdiff_values)} hd "
+            f"Will test {len(cdf_values)} cdf "
             f"= {total_runs} simulations (fast; all WDFs per run, waves disabled)."
+        )
+        optimization_time_step_minutes = max(
+            5.0,
+            float(getattr(context.config.simulation, "time_step_minutes", 1.0) or 1.0),
+        )
+        print(
+            f"Optimization OpenDrift timestep: {optimization_time_step_minutes:g} min "
+            f"(final simulation keeps {context.config.simulation.time_step_minutes:g} min)."
         )
         progress = _ProgressPrinter(
             total_runs,
@@ -675,13 +685,12 @@ class SimulationController:
             on_tick=progress_callback,
             should_cancel=should_cancel,
         )
-        best_row, results_df = self.optimize_wdf_cdf_hd(
+        best_row, results_df = self.optimize_wdf_cdf(
             manchas=context.real_manchas,
             config=context.config,
             observed_trajectory=context.observed_trajectory,
             wdf_values=wdf_values,
             current_drift_values=cdf_values,
-            horizontal_diffusivity_values=hdiff_values,
             particles_per_wdf=request.fast_particles_per_wdf,
             oil_type=context.selected_oil_type,
             progress=progress,
@@ -691,9 +700,10 @@ class SimulationController:
             wind_dataset_path=(str(context.wind_dataset_path) if context.wind_dataset_path else None),
             current_dataset_paths=[str(path) for path in context.current_dataset_paths],
             wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
+            environmental_offset_hours=context.environmental_offset_hours,
         )
 
-        results_name = "wdf_cdf_hd_optimization_fast"
+        results_name = "wdf_cdf_optimization_fast"
         self.workspace_repository.write_csv(out_dir / f"{results_name}.csv", results_df)
         if best_row is None or pd.isna(best_row["skillscore"]):
             print("Combined optimization failed: no valid skillscore computed.")
@@ -701,8 +711,6 @@ class SimulationController:
 
         context.wind_drift_factor = float(best_row["wind_drift_factor"])
         context.current_drift_factor = float(best_row["current_drift_factor"])
-        if "horizontal_diffusivity" in best_row and pd.notna(best_row["horizontal_diffusivity"]):
-            context.horizontal_diffusivity = float(best_row["horizontal_diffusivity"])
         if "oil_type" in best_row:
             context.selected_oil_type = str(best_row["oil_type"])
 
@@ -717,20 +725,16 @@ class SimulationController:
             "cdf_min": float(request.cdf_min),
             "cdf_max": float(request.cdf_max),
             "cdf_step": float(request.cdf_step),
-            "hdiff_values": hdiff_values,
             "mode": mode,
         }
-        if context.horizontal_diffusivity is not None:
-            summary["horizontal_diffusivity"] = float(context.horizontal_diffusivity)
         if context.selected_oil_type:
             summary["oil_type"] = context.selected_oil_type
         if mode == "fast":
             summary["particles_per_wdf"] = int(request.fast_particles_per_wdf)
         self.workspace_repository.write_json(out_dir / f"{results_name}.json", summary)
         print(
-            f"Best wdf/cdf/hd: {context.wind_drift_factor:.4f} "
+            f"Best wdf/cdf: {context.wind_drift_factor:.4f} "
             f"cdf={context.current_drift_factor:.2f} "
-            f"hd={context.horizontal_diffusivity if context.horizontal_diffusivity is not None else 0.0:.2f} "
             f"oil={context.selected_oil_type or 'default'} "
             f"(skillscore {best_row['skillscore']:.4f})"
         )
@@ -750,7 +754,6 @@ class SimulationController:
             wind_drift_factor=context.wind_drift_factor,
             wave_effects_enabled=context.wave_effects_enabled,
             current_drift_factor=context.current_drift_factor,
-            horizontal_diffusivity=context.horizontal_diffusivity,
             processes_dispersion=context.processes_dispersion,
             processes_evaporation=context.processes_evaporation,
         )
@@ -760,9 +763,10 @@ class SimulationController:
             "environment": request.environment,
             "simulation_name": context.config.simulation.name,
             "forcing_source": context.forcing_source,
+            "start_index": int(request.start_index),
         }
-        if request.start_index:
-            run_params["start_index"] = int(request.start_index)
+        run_params["observed_start_timestep"] = int(request.start_index)
+        run_params["environmental_offset_hours"] = float(context.environmental_offset_hours)
         if context.wind_drift_factor is not None:
             run_params["wind_drift_factor"] = float(context.wind_drift_factor)
         run_params["wave_effects_enabled"] = False
@@ -777,8 +781,6 @@ class SimulationController:
         run_params["observed_offset_hours"] = float(context.offset_hours)
         if context.selected_oil_type:
             run_params["oil_type"] = context.selected_oil_type
-        if context.horizontal_diffusivity is not None:
-            run_params["horizontal_diffusivity"] = float(context.horizontal_diffusivity)
         if context.processes_dispersion is not None:
             run_params["processes_dispersion"] = bool(context.processes_dispersion)
         if context.processes_evaporation is not None:
@@ -797,7 +799,6 @@ class SimulationController:
                     wind_drift_factor=context.wind_drift_factor,
                     current_drift_factor=context.current_drift_factor,
                     oil_type=context.selected_oil_type,
-                    horizontal_diffusivity=context.horizontal_diffusivity,
                     processes_dispersion=context.processes_dispersion,
                     processes_evaporation=context.processes_evaporation,
                     forcing_source=context.forcing_source,
@@ -806,6 +807,7 @@ class SimulationController:
                     current_dataset_paths=[str(path) for path in context.current_dataset_paths],
                     wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
                     observed_offset_hours=float(context.offset_hours),
+                    environmental_offset_hours=float(context.environmental_offset_hours),
                 )
             )
             print(f"The results have been generated in {out_dir}")
@@ -837,6 +839,7 @@ class SimulationController:
                         extent=",".join(f"{value:.6f}" for value in context.plot_bounds),
                         datetime_offset_hours=context.offset_hours,
                         real_steps=real_steps,
+                        start_index=int(context.start_index),
                     )
                 )
             except Exception as exc:
@@ -912,7 +915,6 @@ class SimulationController:
             wind_drift_factor=context.wind_drift_factor,
             wave_effects_enabled=False,
             current_drift_factor=context.current_drift_factor,
-            horizontal_diffusivity=context.horizontal_diffusivity,
             oil_type=context.selected_oil_type,
             comparison_gif=compare_gif,
             frames_dir=frames_dir,
