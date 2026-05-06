@@ -38,7 +38,9 @@ class SetupViewBindings:
     download_environment_data: Callable[[ft.ControlEvent], None]
     start_index_field: ft.TextField
     environmental_offset_hours_field: ft.TextField
-    run_opt_switch: ft.Switch
+    run_mode_dropdown: ft.Dropdown
+    fixed_wdf_field: ft.TextField
+    fixed_cdf_field: ft.TextField
     wdf_min_field: ft.TextField
     wdf_max_field: ft.TextField
     wdf_step_field: ft.TextField
@@ -191,7 +193,15 @@ def build_setup_view(bindings: SetupViewBindings) -> ft.Container:
                         spacing=14,
                         controls=[
                             ft.Text("Optimization Parameters", size=28, weight=ft.FontWeight.W_600),
-                            bindings.run_opt_switch,
+                            bindings.run_mode_dropdown,
+                            ft.Text("Fixed Parameters", size=20, weight=ft.FontWeight.W_600),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    bindings.fixed_wdf_field,
+                                    bindings.fixed_cdf_field,
+                                ],
+                            ),
                             ft.Text("Wind Drift Factor (WDF)", size=20, weight=ft.FontWeight.W_600),
                             ft.Row(
                                 spacing=12,

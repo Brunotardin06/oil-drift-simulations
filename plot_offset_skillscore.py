@@ -78,7 +78,7 @@ def collect_scores(root: Path, min_offset: int, max_offset: int) -> pd.DataFrame
     )
 
 
-def plot_scores(dataframe: pd.DataFrame, output_path: Path) -> None:
+def plot_scores(dataframe: pd.DataFrame, output_path: Path, min_offset: int, max_offset: int) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(10, 5.5))
@@ -90,8 +90,6 @@ def plot_scores(dataframe: pd.DataFrame, output_path: Path) -> None:
         color="#1f77b4",
     )
     ax.axvline(0, color="#444444", linewidth=1, linestyle="--")
-    min_offset = int(dataframe["offset_hours"].min())
-    max_offset = int(dataframe["offset_hours"].max())
     ax.set_xlim(min_offset, max_offset)
     ax.set_xticks(list(range(min_offset, max_offset + 1)))
     ax.set_xlabel("Defasagem ambiental (h)")
@@ -116,10 +114,10 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/2-simulated/offset_skillscore_-10_5.png"),
+        default=Path("data/2-simulated/offset_skillscore_-20_5.png"),
         help="Arquivo PNG de saida.",
     )
-    parser.add_argument("--min-offset", type=int, default=-10)
+    parser.add_argument("--min-offset", type=int, default=-20)
     parser.add_argument("--max-offset", type=int, default=5)
     args = parser.parse_args()
 
@@ -132,7 +130,7 @@ def main() -> None:
 
     csv_path = args.out.with_suffix(".csv")
     dataframe.to_csv(csv_path, index=False)
-    plot_scores(dataframe, args.out)
+    plot_scores(dataframe, args.out, args.min_offset, args.max_offset)
 
     print(f"Saved plot: {args.out}")
     print(f"Saved data: {csv_path}")

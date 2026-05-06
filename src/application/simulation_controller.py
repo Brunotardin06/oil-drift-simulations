@@ -90,7 +90,7 @@ class SimulationController:
     """Orchestrate repositories and services for full simulation workflows."""
 
     DEFAULT_ENVIRONMENTAL_OFFSET_HOURS = -3.0
-    MAX_ENVIRONMENTAL_OFFSET_HOURS = 10.0
+    MAX_ENVIRONMENTAL_OFFSET_HOURS = 24.0
 
     def __init__(
         self,

@@ -37,6 +37,7 @@ from src.application.simulation_controller import SimulationController
 EMPTY_IMAGE_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 OBSERVED_BOUNDS_PADDING_DEG = 1.0
 MIN_OBSERVED_BOUNDS_SPAN_DEG = 2.0
+MAX_ENVIRONMENTAL_OFFSET_RANGE_HOURS = 24
 
 
 def _enum_value(enum_name: str, member_name: str, fallback):
@@ -203,12 +204,22 @@ def main(page: ft.Page) -> None:
     wdf_min_field = ft.TextField(label="WDF min", value="0.015", width=140)
     wdf_max_field = ft.TextField(label="WDF max", value="0.040", width=140)
     wdf_step_field = ft.TextField(label="WDF step", value="0.0025", width=140)
+    fixed_wdf_field = ft.TextField(label="Fixed WDF", value="0.035", width=140)
 
     cdf_min_field = ft.TextField(label="CDF min", value="0.5", width=140)
     cdf_max_field = ft.TextField(label="CDF max", value="1.5", width=140)
     cdf_step_field = ft.TextField(label="CDF step", value="0.1", width=140)
+    fixed_cdf_field = ft.TextField(label="Fixed CDF", value="1.0", width=140)
 
-    run_opt_switch = ft.Switch(label="Optimize WDF/CDF", value=True)
+    run_mode_dropdown = ft.Dropdown(
+        label="Mode",
+        value="OPTIMIZATION",
+        options=[
+            ft.dropdown.Option("OPTIMIZATION"),
+            ft.dropdown.Option("NO OPTIMIZATION"),
+        ],
+        width=220,
+    )
 
     def build_offset_values() -> list[int]:
         raw_value = parse_float(
@@ -218,8 +229,11 @@ def main(page: ft.Page) -> None:
         if not raw_value.is_integer():
             raise ValueError("Environmental offset range (h) deve ser um numero inteiro.")
         max_offset = int(abs(raw_value))
-        if max_offset > 10:
-            raise ValueError("Environmental offset range (h) deve estar entre 0 e 10.")
+        if max_offset > MAX_ENVIRONMENTAL_OFFSET_RANGE_HOURS:
+            raise ValueError(
+                "Environmental offset range (h) deve estar entre "
+                f"0 e {MAX_ENVIRONMENTAL_OFFSET_RANGE_HOURS}."
+            )
         return list(range(-max_offset, max_offset + 1))
 
     def offset_suffix(offset_hours: int) -> str:
@@ -497,7 +511,10 @@ def main(page: ft.Page) -> None:
         wind_dataset_paths: list[str],
         environmental_offset_hours: int,
     ) -> ValidationRunRequest:
-        optimize_enabled = bool(run_opt_switch.value)
+        run_mode = (run_mode_dropdown.value or "OPTIMIZATION").strip().upper()
+        optimize_enabled = run_mode != "NO OPTIMIZATION"
+        wind_drift_factor = None
+        current_drift_factor = None
         if optimize_enabled:
             wdf_min = parse_float(wdf_min_field.value, "WDF min")
             wdf_max = parse_float(wdf_max_field.value, "WDF max")
@@ -508,6 +525,8 @@ def main(page: ft.Page) -> None:
             cdf_step = parse_float(cdf_step_field.value, "CDF step")
 
         else:
+            wind_drift_factor = parse_float(fixed_wdf_field.value, "Fixed WDF")
+            current_drift_factor = parse_float(fixed_cdf_field.value, "Fixed CDF")
             # Ranges are not used when optimization is disabled.
             wdf_min = 0.0
             wdf_max = 0.05
@@ -541,6 +560,8 @@ def main(page: ft.Page) -> None:
             skip_animation=False,
             skip_simulation=False,
             skip_plots=False,
+            wind_drift_factor=wind_drift_factor,
+            current_drift_factor=current_drift_factor,
             run_name=run_id,
             current_dataset_path=(current_dataset_paths[0] if current_dataset_paths else None),
             wind_dataset_path=(wind_dataset_paths[0] if wind_dataset_paths else None),
@@ -876,7 +897,9 @@ def main(page: ft.Page) -> None:
                 download_environment_data=start_environment_download,
                 start_index_field=start_index_field,
                 environmental_offset_hours_field=environmental_offset_hours_field,
-                run_opt_switch=run_opt_switch,
+                run_mode_dropdown=run_mode_dropdown,
+                fixed_wdf_field=fixed_wdf_field,
+                fixed_cdf_field=fixed_cdf_field,
                 wdf_min_field=wdf_min_field,
                 wdf_max_field=wdf_max_field,
                 wdf_step_field=wdf_step_field,
