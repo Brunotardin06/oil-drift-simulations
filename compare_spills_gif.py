@@ -34,7 +34,7 @@ def _pick_times_from_list(times, n_times):
     return [times[i] for i in idx]
 
 
-def _prepare_real(shp_zip, datetime_offset_hours=0.0):
+def _prepare_real(shp_zip, datetime_offset_hours=0.0, start_index=0):
     real = gpd.read_file(Path(shp_zip)).to_crs(epsg=4326)
     columns = set(real.columns)
     if "DATA_HORA1" in columns and "TEMPO_ENTR" in columns:
@@ -49,7 +49,14 @@ def _prepare_real(shp_zip, datetime_offset_hours=0.0):
         raise ValueError("Missing datetime fields. Expected DATA_HORA1/TEMPO_ENTR or Data/Hora.")
     if datetime_offset_hours:
         real["datetime"] = real["datetime"] + pd.Timedelta(hours=float(datetime_offset_hours))
-    return real.sort_values("datetime")
+    real = real.sort_values("datetime")
+    unique_times = sorted(real["datetime"].unique())
+    start_index = int(start_index or 0)
+    if start_index < 0 or start_index >= len(unique_times):
+        raise ValueError(f"start-index out of range (0..{len(unique_times)-1})")
+    if start_index:
+        real = real[real["datetime"] >= unique_times[start_index]].copy()
+    return real
 
 
 def _sim_points_at_time(ds, dt):
@@ -86,8 +93,13 @@ def generate_comparison_gif(
     real_alpha=0.35,
     sim_alpha=0.8,
     datetime_offset_hours=0.0,
+    start_index=0,
 ):
-    real = _prepare_real(shp_zip, datetime_offset_hours=datetime_offset_hours)
+    real = _prepare_real(
+        shp_zip,
+        datetime_offset_hours=datetime_offset_hours,
+        start_index=start_index,
+    )
     obs_times = pd.to_datetime(real["datetime"].unique())
 
     ds = xr.open_dataset(sim_nc, engine="netcdf4")
@@ -188,6 +200,8 @@ def generate_comparison_gif(
 @click.option("--real-dynamic", is_flag=True, default=False)
 @click.option("--real-alpha", type=float, default=0.35)
 @click.option("--sim-alpha", type=float, default=0.8)
+@click.option("--datetime-offset-hours", type=float, default=0.0)
+@click.option("--start-index", type=int, default=0)
 def main(
     sim_nc,
     shp_zip,
@@ -202,6 +216,8 @@ def main(
     real_dynamic,
     real_alpha,
     sim_alpha,
+    datetime_offset_hours,
+    start_index,
 ):
     generate_comparison_gif(
         sim_nc=sim_nc,
@@ -217,6 +233,8 @@ def main(
         real_dynamic=real_dynamic,
         real_alpha=real_alpha,
         sim_alpha=sim_alpha,
+        datetime_offset_hours=datetime_offset_hours,
+        start_index=start_index,
     )
 
 

@@ -35,10 +35,12 @@ class SpillRepository:
             geometry = group.geometry
             if (geometry.geom_type == "Point").all():
                 return float(geometry.y.mean()), float(geometry.x.mean())
+            representative_points = geometry.representative_point()
+            return float(representative_points.y.mean()), float(representative_points.x.mean())
 
         raise ValueError(
             "Latitude/Longitude columns not found (e.g., Latitude/Longitude or lat/lon) "
-            "and geometry is not Point. Provide lat/lon fields in the shapefile."
+            "and geometry is missing. Provide lat/lon fields in the shapefile."
         )
 
     def ensure_datetime_column(self, manchas: pd.DataFrame, offset_hours: float = 0.0) -> pd.DataFrame:
@@ -79,4 +81,3 @@ class SpillRepository:
             lat, lon = self.lat_lon_from_group(group, lat_col, lon_col)
             rows.append({"time": pd.to_datetime(dt), "lon": lon, "lat": lat})
         return pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
-

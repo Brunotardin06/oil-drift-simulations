@@ -53,7 +53,6 @@ class FastOptimizationRequest:
     observed_trajectory: Any
     wdf_values: Sequence[float]
     current_drift_values: Sequence[float]
-    horizontal_diffusivity_values: Optional[Sequence[float]] = None
     particles_per_wdf: int = 1
     oil_type: Optional[str] = None
     progress: Any = None
@@ -62,6 +61,7 @@ class FastOptimizationRequest:
     wind_dataset_path: Optional[str] = None
     current_dataset_paths: Optional[Sequence[str]] = None
     wind_dataset_paths: Optional[Sequence[str]] = None
+    environmental_offset_hours: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +74,6 @@ class SimulationRunRequest:
     wind_drift_factor: Optional[float] = None
     current_drift_factor: Optional[float] = None
     oil_type: Optional[str] = None
-    horizontal_diffusivity: Optional[float] = None
     processes_dispersion: Optional[bool] = None
     processes_evaporation: Optional[bool] = None
     forcing_source: str = "COPERNICUS"
@@ -83,6 +82,7 @@ class SimulationRunRequest:
     current_dataset_paths: Optional[Sequence[str]] = None
     wind_dataset_paths: Optional[Sequence[str]] = None
     observed_offset_hours: Optional[float] = None
+    environmental_offset_hours: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,7 @@ class GifGenerationRequest:
     extent: str
     datetime_offset_hours: float = 0.0
     real_steps: int = 0
+    start_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -103,7 +104,7 @@ class ValidationRunRequest:
     skip_plots: bool = False
     evaluation: bool = False
     optimize_wdf: bool = False
-    optimize_wdf_cdf_hd: bool = False
+    optimize_wdf_cdf: bool = False
     optimize_physics: bool = False
     optimize_wdf_mode: str = "fast"
     fast_particles_per_wdf: int = 1
@@ -113,14 +114,12 @@ class ValidationRunRequest:
     cdf_min: float = 0.5
     cdf_max: float = 1.0
     cdf_step: float = 0.1
-    diffusivity_values: Optional[str] = None
     dispersion_values: Optional[str] = None
     evaporation_values: Optional[str] = None
     optimize_cleanup: bool = False
     padding_animation_frame: float = 0.1
     wind_drift_factor: Optional[float] = None
     current_drift_factor: Optional[float] = None
-    horizontal_diffusivity: Optional[float] = None
     processes_dispersion: Optional[str] = None
     processes_evaporation: Optional[str] = None
     oil_types: Optional[str] = None
@@ -132,7 +131,7 @@ class ValidationRunRequest:
     min_lat: Optional[float] = None
     max_lat: Optional[float] = None
     start_index: int = 0
-    optimize_cdf_hd_de: bool = False
+    environmental_offset_hours: Optional[float] = None
     run_name: Optional[str] = None
     forcing_source: str = "COPERNICUS"
     current_dataset_path: Optional[str] = None
@@ -150,7 +149,6 @@ class ValidationRunResult:
     wind_drift_factor: Optional[float] = None
     wave_effects_enabled: bool = False
     current_drift_factor: Optional[float] = None
-    horizontal_diffusivity: Optional[float] = None
     oil_type: Optional[str] = None
     comparison_gif: Optional[Path] = None
     frames_dir: Optional[Path] = None

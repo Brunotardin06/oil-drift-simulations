@@ -18,7 +18,6 @@ def simulate_drift(
     wind_drift_factor=None,
     current_drift_factor=None,
     oil_type=None,
-    horizontal_diffusivity=None,
     processes_dispersion=None,
     processes_evaporation=None,
     forcing_source="COPERNICUS",
@@ -27,6 +26,7 @@ def simulate_drift(
     current_dataset_paths=None,
     wind_dataset_paths=None,
     observed_offset_hours=None,
+    environmental_offset_hours=None,
 ):
     return _simulation_service.simulate_drift(
         manchas=manchas,
@@ -37,7 +37,6 @@ def simulate_drift(
         wind_drift_factor=wind_drift_factor,
         current_drift_factor=current_drift_factor,
         oil_type=oil_type,
-        horizontal_diffusivity=horizontal_diffusivity,
         processes_dispersion=processes_dispersion,
         processes_evaporation=processes_evaporation,
         forcing_source=forcing_source,
@@ -46,4 +45,5 @@ def simulate_drift(
         current_dataset_paths=current_dataset_paths,
         wind_dataset_paths=wind_dataset_paths,
         observed_offset_hours=observed_offset_hours,
+        environmental_offset_hours=environmental_offset_hours,
     )
