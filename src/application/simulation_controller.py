@@ -75,6 +75,7 @@ class _ValidationContext:
     real_manchas: Any
     plot_bounds: tuple[float, float, float, float]
     observed_trajectory: Any
+    environmental_offset_values: Optional[tuple[float, ...]]
     start_index: int
     skip_animation: bool
     skip_plots: bool
@@ -282,6 +283,61 @@ class SimulationController:
         if singular_path and str(singular_path).strip():
             values.append(str(singular_path).strip())
         return list(dict.fromkeys(Path(value) for value in values))
+
+    def _normalize_environmental_offset_values(
+        self,
+        values: Optional[list[float] | tuple[float, ...]],
+    ) -> Optional[tuple[float, ...]]:
+        if values is None:
+            return None
+
+        normalized: list[float] = []
+        for value in values:
+            offset = float(value)
+            if not np.isfinite(offset):
+                raise ValueError("environmental offset values must be finite")
+            if abs(offset) > self.MAX_ENVIRONMENTAL_OFFSET_HOURS:
+                raise ValueError(
+                    f"environmental offset values must be between "
+                    f"-{self.MAX_ENVIRONMENTAL_OFFSET_HOURS:g} and {self.MAX_ENVIRONMENTAL_OFFSET_HOURS:g}"
+                )
+            normalized.append(offset)
+
+        if not normalized:
+            return None
+        return tuple(dict.fromkeys(normalized))
+
+    def _valid_environmental_offsets(
+        self,
+        manchas,
+        current_dataset_paths: tuple[Path, ...],
+        sal_temp_dataset_path: Path,
+        wind_dataset_paths: tuple[Path, ...],
+        environmental_offset_values: tuple[float, ...],
+    ) -> tuple[float, ...]:
+        valid_offsets: list[float] = []
+        first_error: Optional[Exception] = None
+        for offset in environmental_offset_values:
+            try:
+                self._validate_environment_coverage(
+                    manchas,
+                    current_dataset_paths=current_dataset_paths,
+                    wind_dataset_paths=wind_dataset_paths,
+                    sal_temp_dataset_path=sal_temp_dataset_path,
+                    environmental_offset_hours=offset,
+                )
+                valid_offsets.append(offset)
+            except ValueError as exc:
+                if first_error is None:
+                    first_error = exc
+                print(f"Skipping environmental offset {offset:g} h: {exc}")
+
+        if not valid_offsets:
+            raise ValueError(
+                "No environmental offset has valid forcing coverage."
+                + (f" First error: {first_error}" if first_error else "")
+            )
+        return tuple(valid_offsets)
 
     def _validate_environment_coverage(
         self,
@@ -555,6 +611,9 @@ class SimulationController:
                 f"environmental-offset-hours must be between "
                 f"-{self.MAX_ENVIRONMENTAL_OFFSET_HOURS:g} and {self.MAX_ENVIRONMENTAL_OFFSET_HOURS:g}"
             )
+        environmental_offset_values = self._normalize_environmental_offset_values(
+            request.environmental_offset_values
+        )
         current_paths = self._normalize_path_list(
             request.current_dataset_path,
             list(request.current_dataset_paths) if request.current_dataset_paths else None,
@@ -579,13 +638,23 @@ class SimulationController:
                 padding_animation_frame=request.padding_animation_frame,
             )
         )
-        self._validate_environment_coverage(
-            observed_context.manchas,
-            current_dataset_paths=tuple(current_paths),
-            wind_dataset_paths=tuple(wind_paths),
-            sal_temp_dataset_path=sal_temp_dataset_path,
-            environmental_offset_hours=environmental_offset_hours,
-        )
+        if environmental_offset_values is None:
+            self._validate_environment_coverage(
+                observed_context.manchas,
+                current_dataset_paths=tuple(current_paths),
+                wind_dataset_paths=tuple(wind_paths),
+                sal_temp_dataset_path=sal_temp_dataset_path,
+                environmental_offset_hours=environmental_offset_hours,
+            )
+        else:
+            environmental_offset_values = self._valid_environmental_offsets(
+                observed_context.manchas,
+                current_dataset_paths=tuple(current_paths),
+                wind_dataset_paths=tuple(wind_paths),
+                sal_temp_dataset_path=sal_temp_dataset_path,
+                environmental_offset_values=environmental_offset_values,
+            )
+            environmental_offset_hours = environmental_offset_values[0]
 
         selected_oil_types = self._load_oil_types(request.oil_types, request.oil_types_file)
         selected_oil_type = selected_oil_types[0] if selected_oil_types else None
@@ -602,6 +671,7 @@ class SimulationController:
             real_manchas=observed_context.manchas,
             plot_bounds=observed_context.plot_bounds,
             observed_trajectory=self.build_observed_trajectory(observed_context.manchas),
+            environmental_offset_values=environmental_offset_values,
             start_index=int(request.start_index),
             skip_animation=skip_animation,
             skip_plots=skip_plots,
@@ -665,10 +735,16 @@ class SimulationController:
         if request.optimize_cleanup:
             print("Note: --optimize-cleanup is ignored in fast mode.")
 
-        total_runs = len(cdf_values)
+        environmental_offset_values = (
+            context.environmental_offset_values
+            if context.environmental_offset_values is not None
+            else (float(context.environmental_offset_hours),)
+        )
+        total_runs = len(environmental_offset_values) * len(cdf_values)
         print(
-            f"Will test {len(cdf_values)} cdf "
-            f"= {total_runs} simulations (fast; all WDFs per run, waves disabled)."
+            f"Will test {len(environmental_offset_values)} environmental offsets x "
+            f"{len(cdf_values)} cdf = {total_runs} simulations "
+            f"(fast; all WDFs per run, waves disabled)."
         )
         optimization_time_step_minutes = max(
             5.0,
@@ -685,23 +761,47 @@ class SimulationController:
             on_tick=progress_callback,
             should_cancel=should_cancel,
         )
-        best_row, results_df = self.optimize_wdf_cdf(
-            manchas=context.real_manchas,
-            config=context.config,
-            observed_trajectory=context.observed_trajectory,
-            wdf_values=wdf_values,
-            current_drift_values=cdf_values,
-            particles_per_wdf=request.fast_particles_per_wdf,
-            oil_type=context.selected_oil_type,
-            progress=progress,
-            should_cancel=should_cancel,
-            forcing_source=context.forcing_source,
-            current_dataset_path=str(context.current_dataset_path),
-            wind_dataset_path=(str(context.wind_dataset_path) if context.wind_dataset_path else None),
-            current_dataset_paths=[str(path) for path in context.current_dataset_paths],
-            wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
-            environmental_offset_hours=context.environmental_offset_hours,
+        results_frames = []
+        for environmental_offset_hours in environmental_offset_values:
+            self._check_cancelled(should_cancel)
+            print(f"Testing environmental offset {environmental_offset_hours:g} h...")
+            _, offset_results_df = self.optimize_wdf_cdf(
+                manchas=context.real_manchas,
+                config=context.config,
+                observed_trajectory=context.observed_trajectory,
+                wdf_values=wdf_values,
+                current_drift_values=cdf_values,
+                particles_per_wdf=request.fast_particles_per_wdf,
+                oil_type=context.selected_oil_type,
+                progress=progress,
+                should_cancel=should_cancel,
+                forcing_source=context.forcing_source,
+                current_dataset_path=str(context.current_dataset_path),
+                wind_dataset_path=(str(context.wind_dataset_path) if context.wind_dataset_path else None),
+                current_dataset_paths=[str(path) for path in context.current_dataset_paths],
+                wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
+                environmental_offset_hours=environmental_offset_hours,
+            )
+            if not offset_results_df.empty:
+                offset_results_df = offset_results_df.copy()
+                offset_results_df["environmental_offset_hours"] = float(environmental_offset_hours)
+                results_frames.append(offset_results_df)
+
+        results_df = (
+            pd.concat(results_frames, ignore_index=True)
+            if results_frames
+            else pd.DataFrame(
+                columns=[
+                    "wind_drift_factor",
+                    "skillscore",
+                    "current_drift_factor",
+                    "environmental_offset_hours",
+                ]
+            )
         )
+        best_row = None
+        if not results_df.empty and results_df["skillscore"].notna().any():
+            best_row = results_df.loc[results_df["skillscore"].idxmax()]
 
         results_name = "wdf_cdf_optimization_fast"
         self.workspace_repository.write_csv(out_dir / f"{results_name}.csv", results_df)
@@ -711,6 +811,7 @@ class SimulationController:
 
         context.wind_drift_factor = float(best_row["wind_drift_factor"])
         context.current_drift_factor = float(best_row["current_drift_factor"])
+        context.environmental_offset_hours = float(best_row["environmental_offset_hours"])
         if "oil_type" in best_row:
             context.selected_oil_type = str(best_row["oil_type"])
 
@@ -718,6 +819,7 @@ class SimulationController:
             "wind_drift_factor": context.wind_drift_factor,
             "wave_effects_enabled": False,
             "current_drift_factor": context.current_drift_factor,
+            "environmental_offset_hours": context.environmental_offset_hours,
             "skillscore": float(best_row["skillscore"]),
             "wdf_min": float(request.wdf_min),
             "wdf_max": float(request.wdf_max),
@@ -725,6 +827,9 @@ class SimulationController:
             "cdf_min": float(request.cdf_min),
             "cdf_max": float(request.cdf_max),
             "cdf_step": float(request.cdf_step),
+            "environmental_offset_values": [
+                float(value) for value in environmental_offset_values
+            ],
             "mode": mode,
         }
         if context.selected_oil_type:
@@ -735,6 +840,7 @@ class SimulationController:
         print(
             f"Best wdf/cdf: {context.wind_drift_factor:.4f} "
             f"cdf={context.current_drift_factor:.2f} "
+            f"env_offset={context.environmental_offset_hours:+g}h "
             f"oil={context.selected_oil_type or 'default'} "
             f"(skillscore {best_row['skillscore']:.4f})"
         )
@@ -915,6 +1021,7 @@ class SimulationController:
             wind_drift_factor=context.wind_drift_factor,
             wave_effects_enabled=False,
             current_drift_factor=context.current_drift_factor,
+            environmental_offset_hours=context.environmental_offset_hours,
             oil_type=context.selected_oil_type,
             comparison_gif=compare_gif,
             frames_dir=frames_dir,

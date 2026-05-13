@@ -51,7 +51,15 @@ from src.application.simulation_controller import SimulationController
 @click.option("--max-lat", type=float, default=None)
 @click.option("--start-index", type=int, default=0)
 @click.option("--environmental-offset-hours", type=float, default=None)
+@click.option("--environmental-offset-values", type=str, default=None)
 def simulate_validation(**kwargs):
+    offset_values = kwargs.pop("environmental_offset_values", None)
+    if offset_values:
+        kwargs["environmental_offset_values"] = [
+            float(item.strip())
+            for item in offset_values.split(",")
+            if item.strip()
+        ]
     controller = SimulationController()
     request = ValidationRunRequest(**kwargs)
     controller.run_validation(request)

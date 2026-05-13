@@ -132,6 +132,7 @@ class ValidationRunRequest:
     max_lat: Optional[float] = None
     start_index: int = 0
     environmental_offset_hours: Optional[float] = None
+    environmental_offset_values: Optional[Sequence[float]] = None
     run_name: Optional[str] = None
     forcing_source: str = "COPERNICUS"
     current_dataset_path: Optional[str] = None
@@ -149,6 +150,7 @@ class ValidationRunResult:
     wind_drift_factor: Optional[float] = None
     wave_effects_enabled: bool = False
     current_drift_factor: Optional[float] = None
+    environmental_offset_hours: Optional[float] = None
     oil_type: Optional[str] = None
     comparison_gif: Optional[Path] = None
     frames_dir: Optional[Path] = None

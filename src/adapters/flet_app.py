@@ -142,6 +142,7 @@ def main(page: ft.Page) -> None:
     result_runtime_text = ft.Text("N/A", size=26, weight=ft.FontWeight.W_600, color="#0F172A")
     best_wdf_text = ft.Text("N/A", size=24, weight=ft.FontWeight.W_600)
     best_cdf_text = ft.Text("N/A", size=24, weight=ft.FontWeight.W_600)
+    best_environmental_offset_text = ft.Text("N/A", size=24, weight=ft.FontWeight.W_600)
 
     frame_image = ft.Image(
         src=EMPTY_IMAGE_SRC,
@@ -309,6 +310,11 @@ def main(page: ft.Page) -> None:
         best_cdf_text.value = (
             f"{metrics['best_cdf']:.2f}" if metrics["best_cdf"] is not None else "N/A"
         )
+        best_environmental_offset_text.value = (
+            f"{metrics['best_environmental_offset']:+g} h"
+            if metrics["best_environmental_offset"] is not None
+            else "N/A"
+        )
         state["frames"] = build_frame_list(out_dir, sim_path)
         if state["frames"]:
             frame_slider.disabled = False
@@ -382,25 +388,32 @@ def main(page: ft.Page) -> None:
             index = int(payload.get("index", 0))
             total = int(payload.get("total", 0))
             offset = payload.get("offset")
+            offset_values = payload.get("offset_values")
             run_id = payload.get("run_id", "")
             state["run_id"] = run_id
             state["next_progress_log_pct"] = 0
             progress_bar.value = 0
             progress_text.value = "0%"
             status_title.value = "Running"
+            offset_label = None
+            if offset_values:
+                offset_label = f"otimizando {len(offset_values)} offsets"
+            elif isinstance(offset, (int, float)):
+                offset_label = f"offset ambiental {offset:+g} h"
             status_subtitle.value = (
-                f"Offset ambiental {offset:+g} h ({index}/{total})"
-                if isinstance(offset, (int, float))
+                f"{offset_label} ({index}/{total})"
+                if offset_label
                 else f"Executando lote ({index}/{total})"
             )
             append_log(
-                f"Starting offset {offset:+g} h ({index}/{total}) - Run ID: {run_id}"
-                if isinstance(offset, (int, float))
+                f"Starting {offset_label} ({index}/{total}) - Run ID: {run_id}"
+                if offset_label
                 else f"Starting batch run {index}/{total} - Run ID: {run_id}"
             )
         elif event_type == "batch_done":
             result: ValidationRunResult = payload["result"]
             offset = payload.get("offset")
+            offset_values = payload.get("offset_values")
             index = int(payload.get("index", 0))
             total = int(payload.get("total", 0))
             state["out_dir"] = result.out_dir
@@ -408,9 +421,14 @@ def main(page: ft.Page) -> None:
             output_path_text.value = str(result.out_dir)
             refresh_results()
             refresh_artifacts()
+            offset_label = None
+            if offset_values:
+                offset_label = f"optimized {len(offset_values)} offsets"
+            elif isinstance(offset, (int, float)):
+                offset_label = f"offset {offset:+g} h"
             append_log(
-                f"Finished offset {offset:+g} h ({index}/{total}): {result.out_dir}"
-                if isinstance(offset, (int, float))
+                f"Finished {offset_label} ({index}/{total}): {result.out_dir}"
+                if offset_label
                 else f"Finished batch run {index}/{total}: {result.out_dir}"
             )
         elif event_type == "done":
@@ -509,7 +527,8 @@ def main(page: ft.Page) -> None:
         observed_bounds: tuple[float, float, float, float],
         current_dataset_paths: list[str],
         wind_dataset_paths: list[str],
-        environmental_offset_hours: int,
+        environmental_offset_hours: float,
+        environmental_offset_values: list[int] | None = None,
     ) -> ValidationRunRequest:
         run_mode = (run_mode_dropdown.value or "OPTIMIZATION").strip().upper()
         optimize_enabled = run_mode != "NO OPTIMIZATION"
@@ -548,6 +567,7 @@ def main(page: ft.Page) -> None:
             max_lat=observed_bounds[3],
             start_index=start_index,
             environmental_offset_hours=float(environmental_offset_hours),
+            environmental_offset_values=environmental_offset_values,
             optimize_wdf_cdf=optimize_enabled,
             optimize_wdf_mode="fast",
             fast_particles_per_wdf=1,
@@ -591,6 +611,7 @@ def main(page: ft.Page) -> None:
                         "total": total_runs,
                         "run_id": request.run_name,
                         "offset": request.environmental_offset_hours,
+                        "offset_values": request.environmental_offset_values,
                     }
                 )
                 with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
@@ -612,6 +633,7 @@ def main(page: ft.Page) -> None:
                         "total": total_runs,
                         "result": result,
                         "offset": request.environmental_offset_hours,
+                        "offset_values": request.environmental_offset_values,
                     }
                 )
 
@@ -695,8 +717,10 @@ def main(page: ft.Page) -> None:
                 append_log("Warning: observed ZIP has no .prj file.")
             base_run_id = build_run_id()
             requests = []
-            for offset_hours in offset_values:
-                run_id = f"{base_run_id}_{offset_suffix(offset_hours)}"
+            run_mode = (run_mode_dropdown.value or "OPTIMIZATION").strip().upper()
+            optimize_enabled = run_mode != "NO OPTIMIZATION"
+            if optimize_enabled:
+                run_id = f"{base_run_id}_envopt"
                 staged_zip = stage_observed_zip(project_root, run_id, source_zip)
                 requests.append(
                     build_request(
@@ -705,9 +729,24 @@ def main(page: ft.Page) -> None:
                         observed_bounds=observed_bounds,
                         current_dataset_paths=selected_current_datasets,
                         wind_dataset_paths=selected_wind_datasets,
-                        environmental_offset_hours=offset_hours,
+                        environmental_offset_hours=offset_values[0],
+                        environmental_offset_values=offset_values,
                     )
                 )
+            else:
+                for offset_hours in offset_values:
+                    run_id = f"{base_run_id}_{offset_suffix(offset_hours)}"
+                    staged_zip = stage_observed_zip(project_root, run_id, source_zip)
+                    requests.append(
+                        build_request(
+                            staged_zip=staged_zip,
+                            run_id=run_id,
+                            observed_bounds=observed_bounds,
+                            current_dataset_paths=selected_current_datasets,
+                            wind_dataset_paths=selected_wind_datasets,
+                            environmental_offset_hours=offset_hours,
+                        )
+                    )
             state["run_id"] = requests[0].run_name if requests else base_run_id
             state["staged_zip"] = requests[0].shp_zip if requests else None
             append_log(
@@ -722,7 +761,11 @@ def main(page: ft.Page) -> None:
                 f"lat=[{observed_bounds[2]:.5f},{observed_bounds[3]:.5f}]"
             )
             append_log(
-                "Environmental offsets to run: "
+                (
+                    "Environmental offsets to optimize: "
+                    if optimize_enabled
+                    else "Environmental offsets to run: "
+                )
                 + ", ".join(str(offset) for offset in offset_values)
             )
         except Exception as exc:
@@ -925,6 +968,7 @@ def main(page: ft.Page) -> None:
                 result_runtime_text=result_runtime_text,
                 best_wdf_text=best_wdf_text,
                 best_cdf_text=best_cdf_text,
+                best_environmental_offset_text=best_environmental_offset_text,
                 frame_image=frame_image,
                 frame_label=frame_label,
                 frame_slider=frame_slider,

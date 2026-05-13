@@ -66,6 +66,7 @@ class ResultsViewBindings:
     result_runtime_text: ft.Text
     best_wdf_text: ft.Text
     best_cdf_text: ft.Text
+    best_environmental_offset_text: ft.Text
     frame_image: ft.Image
     frame_label: ft.Text
     frame_slider: ft.Slider
@@ -347,6 +348,12 @@ def build_results_view(bindings: ResultsViewBindings) -> ft.Container:
                                 controls=[
                                     ft.Column(controls=[ft.Text("WDF", color="#4B6385"), bindings.best_wdf_text]),
                                     ft.Column(controls=[ft.Text("CDF", color="#4B6385"), bindings.best_cdf_text]),
+                                    ft.Column(
+                                        controls=[
+                                            ft.Text("Env offset", color="#4B6385"),
+                                            bindings.best_environmental_offset_text,
+                                        ]
+                                    ),
                                 ],
                             ),
                         ],

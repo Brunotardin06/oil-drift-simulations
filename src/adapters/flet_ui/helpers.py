@@ -116,6 +116,7 @@ def extract_metrics(out_dir: Path) -> dict:
         "best_skillscore": None,
         "best_wdf": None,
         "best_cdf": None,
+        "best_environmental_offset": None,
     }
     csv_path = out_dir / "wdf_cdf_optimization_fast.csv"
     if not csv_path.exists():
@@ -133,6 +134,8 @@ def extract_metrics(out_dir: Path) -> dict:
     metrics["best_skillscore"] = float(best.get("skillscore"))
     metrics["best_wdf"] = float(best.get("wind_drift_factor"))
     metrics["best_cdf"] = float(best.get("current_drift_factor"))
+    if "environmental_offset_hours" in best:
+        metrics["best_environmental_offset"] = float(best.get("environmental_offset_hours"))
     return metrics
 
 
