@@ -97,26 +97,10 @@ class OptimizationService:
         if obs.empty or len(obs) < 2:
             raise ValueError("Observed trajectory has insufficient timestamps within the simulation window")
 
-        lat_col, lon_col = self.spill_repository.find_lat_lon_columns(manchas)
-        if lat_col and lon_col:
-            lat_val = pd.to_numeric(shape_inicial[lat_col], errors="coerce")
-            lon_val = pd.to_numeric(shape_inicial[lon_col], errors="coerce")
-            if pd.isna(lat_val) or pd.isna(lon_val):
-                raise ValueError("Invalid lat/lon values in shapefile for the initial timestep")
-            start_lat = float(lat_val)
-            start_lon = float(lon_val)
-        elif hasattr(shape_inicial, "geometry") and shape_inicial.geometry.geom_type == "Point":
-            start_lat = float(shape_inicial.geometry.y)
-            start_lon = float(shape_inicial.geometry.x)
-        elif hasattr(shape_inicial, "geometry") and shape_inicial.geometry is not None:
-            point = shape_inicial.geometry.representative_point()
-            start_lat = float(point.y)
-            start_lon = float(point.x)
-        else:
-            raise ValueError(
-                "Latitude/Longitude columns not found (e.g., Latitude/Longitude or lat/lon) "
-                "and geometry is missing. Provide lat/lon fields in the shapefile."
-            )
+        initial_group = manchas[manchas["datetime"] == seed_time_start]
+        start_lat, start_lon = self.spill_repository.centroid_lat_lon_from_group(initial_group)
+        if not np.isfinite(start_lat) or not np.isfinite(start_lon):
+            raise ValueError("Invalid centroid for the initial timestep geometry")
 
         if current_dataset_paths:
             current_paths = [Path(path) for path in current_dataset_paths]
