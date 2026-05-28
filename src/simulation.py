@@ -27,6 +27,7 @@ def simulate_drift(
     wind_dataset_paths=None,
     observed_offset_hours=None,
     environmental_offset_hours=None,
+    temporal_lag_seconds=None,
 ):
     return _simulation_service.simulate_drift(
         manchas=manchas,
@@ -46,4 +47,5 @@ def simulate_drift(
         wind_dataset_paths=wind_dataset_paths,
         observed_offset_hours=observed_offset_hours,
         environmental_offset_hours=environmental_offset_hours,
+        temporal_lag_seconds=temporal_lag_seconds,
     )

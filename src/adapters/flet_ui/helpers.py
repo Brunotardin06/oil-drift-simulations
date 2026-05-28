@@ -143,6 +143,9 @@ def build_artifact_list(out_dir: Path) -> list[Path]:
     if not out_dir.exists():
         return []
     files = [path for path in out_dir.iterdir() if path.is_file()]
+    aggregated_dir = out_dir / "aggregated"
+    if aggregated_dir.exists():
+        files.extend(path for path in aggregated_dir.iterdir() if path.is_file())
     files.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return files
 

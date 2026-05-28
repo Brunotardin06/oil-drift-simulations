@@ -51,6 +51,50 @@ class SetupViewBindings:
 
 
 @dataclass(frozen=True)
+class StochasticViewBindings:
+    choose_zip: Callable[[ft.ControlEvent], None]
+    selected_zip_text: ft.Text
+    choose_current_dataset: Callable[[ft.ControlEvent], None]
+    selected_current_dataset_text: ft.Text
+    choose_wind_dataset: Callable[[ft.ControlEvent], None]
+    selected_wind_dataset_text: ft.Text
+    forcing_source_dropdown: ft.Dropdown
+    environment_dropdown: ft.Dropdown
+    start_index_field: ft.TextField
+    base_environmental_offset_hours_field: ft.TextField
+    run_name_field: ft.TextField
+    n_simulations_field: ft.TextField
+    seed_field: ft.TextField
+    cdf_enabled_checkbox: ft.Checkbox
+    cdf_mean_field: ft.TextField
+    cdf_std_field: ft.TextField
+    cdf_min_field: ft.TextField
+    cdf_max_field: ft.TextField
+    cdf_truncate_checkbox: ft.Checkbox
+    wdf_enabled_checkbox: ft.Checkbox
+    wdf_mean_field: ft.TextField
+    wdf_std_field: ft.TextField
+    wdf_min_field: ft.TextField
+    wdf_max_field: ft.TextField
+    wdf_truncate_checkbox: ft.Checkbox
+    tau_enabled_checkbox: ft.Checkbox
+    tau_mean_field: ft.TextField
+    tau_std_field: ft.TextField
+    tau_min_field: ft.TextField
+    tau_max_field: ft.TextField
+    tau_input_unit_dropdown: ft.Dropdown
+    tau_rounding_dropdown: ft.Dropdown
+    tau_truncate_checkbox: ft.Checkbox
+    grid_lon_min_field: ft.TextField
+    grid_lon_max_field: ft.TextField
+    grid_lat_min_field: ft.TextField
+    grid_lat_max_field: ft.TextField
+    grid_resolution_field: ft.TextField
+    grid_margin_field: ft.TextField
+    start_stochastic_execution: Callable[[ft.ControlEvent], None]
+
+
+@dataclass(frozen=True)
 class ExecutionViewBindings:
     status_title: ft.Text
     status_subtitle: ft.Text
@@ -231,6 +275,194 @@ def build_setup_view(bindings: SetupViewBindings) -> ft.Container:
                             "Start Execution",
                             icon=_icon_value("PLAY_ARROW", "play_arrow"),
                             on_click=bindings.start_execution,
+                        )
+                    ],
+                ),
+            ],
+        ),
+    )
+
+
+def build_stochastic_view(bindings: StochasticViewBindings) -> ft.Container:
+    return ft.Container(
+        padding=28,
+        content=ft.Column(
+            spacing=18,
+            scroll=_enum_value("ScrollMode", "AUTO", "auto"),
+            controls=[
+                ft.Text("Simulação Estocástica", size=42, weight=ft.FontWeight.W_700, color="#0F172A"),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("Entradas", size=28, weight=ft.FontWeight.W_600),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    ft.ElevatedButton(
+                                        "Choose ZIP",
+                                        icon=_icon_value("UPLOAD_FILE", "upload_file"),
+                                        on_click=bindings.choose_zip,
+                                    ),
+                                    bindings.selected_zip_text,
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=12,
+                                controls=[bindings.forcing_source_dropdown, bindings.environment_dropdown],
+                            ),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    ft.OutlinedButton(
+                                        "Choose Current File(s)",
+                                        icon=_icon_value("WATER_DROP", "water_drop"),
+                                        on_click=bindings.choose_current_dataset,
+                                    ),
+                                    bindings.selected_current_dataset_text,
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    ft.OutlinedButton(
+                                        "Choose Wind File(s)",
+                                        icon=_icon_value("AIR", "air"),
+                                        on_click=bindings.choose_wind_dataset,
+                                    ),
+                                    bindings.selected_wind_dataset_text,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("Execução", size=28, weight=ft.FontWeight.W_600),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    bindings.run_name_field,
+                                    bindings.n_simulations_field,
+                                    bindings.seed_field,
+                                    bindings.start_index_field,
+                                    bindings.base_environmental_offset_hours_field,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("CDF", size=28, weight=ft.FontWeight.W_600),
+                            bindings.cdf_enabled_checkbox,
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    bindings.cdf_mean_field,
+                                    bindings.cdf_std_field,
+                                    bindings.cdf_min_field,
+                                    bindings.cdf_max_field,
+                                    bindings.cdf_truncate_checkbox,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("WDF", size=28, weight=ft.FontWeight.W_600),
+                            bindings.wdf_enabled_checkbox,
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    bindings.wdf_mean_field,
+                                    bindings.wdf_std_field,
+                                    bindings.wdf_min_field,
+                                    bindings.wdf_max_field,
+                                    bindings.wdf_truncate_checkbox,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("Defasagem Temporal", size=28, weight=ft.FontWeight.W_600),
+                            bindings.tau_enabled_checkbox,
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    bindings.tau_mean_field,
+                                    bindings.tau_std_field,
+                                    bindings.tau_min_field,
+                                    bindings.tau_max_field,
+                                    bindings.tau_input_unit_dropdown,
+                                    bindings.tau_rounding_dropdown,
+                                    bindings.tau_truncate_checkbox,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor="#EDF1F6",
+                    border=ft.border.all(1, "#C8D1DB"),
+                    border_radius=12,
+                    padding=20,
+                    content=ft.Column(
+                        spacing=14,
+                        controls=[
+                            ft.Text("Grade Espacial Fixa", size=28, weight=ft.FontWeight.W_600),
+                            ft.Row(
+                                spacing=12,
+                                controls=[
+                                    bindings.grid_lon_min_field,
+                                    bindings.grid_lon_max_field,
+                                    bindings.grid_lat_min_field,
+                                    bindings.grid_lat_max_field,
+                                    bindings.grid_resolution_field,
+                                    bindings.grid_margin_field,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    controls=[
+                        ft.FilledButton(
+                            "Run Stochastic Simulation",
+                            icon=_icon_value("PLAY_ARROW", "play_arrow"),
+                            on_click=bindings.start_stochastic_execution,
                         )
                     ],
                 ),
@@ -433,6 +665,7 @@ def build_sidebar(on_navigate: Callable[[str], None]) -> tuple[ft.Container, dic
 
     for label, icon in [
         ("Validation Setup", _icon_value("DESCRIPTION_OUTLINED", "description_outlined")),
+        ("Simulação Estocástica", _icon_value("SCIENCE_OUTLINED", "science_outlined")),
         ("Execution", _icon_value("PLAY_ARROW_OUTLINED", "play_arrow_outlined")),
         ("Results", _icon_value("BAR_CHART_OUTLINED", "bar_chart_outlined")),
         ("Artifacts", _icon_value("FOLDER_OPEN_OUTLINED", "folder_open_outlined")),

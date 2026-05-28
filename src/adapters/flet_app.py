@@ -15,6 +15,7 @@ from src.adapters.flet_ui import (
     QueueWriter,
     ResultsViewBindings,
     SetupViewBindings,
+    StochasticViewBindings,
     build_artifact_list,
     build_artifacts_view,
     build_execution_view,
@@ -24,6 +25,7 @@ from src.adapters.flet_ui import (
     build_run_id,
     build_setup_view,
     build_sidebar,
+    build_stochastic_view,
     extract_metrics,
     list_environments,
     open_path,
@@ -31,8 +33,18 @@ from src.adapters.flet_ui import (
     stage_observed_zip,
     validate_observed_zip,
 )
-from src.application.dto import ValidationRunRequest, ValidationRunResult
+from src.application.dto import (
+    StochasticValidationRunRequest,
+    ValidationRunRequest,
+    ValidationRunResult,
+)
 from src.application.simulation_controller import SimulationController
+from src.services.stochastic.stochastic_models import (
+    StochasticGridConfig,
+    StochasticParameterConfig,
+    StochasticRunConfig,
+    TemporalLagConfig,
+)
 
 EMPTY_IMAGE_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 OBSERVED_BOUNDS_PADDING_DEG = 1.0
@@ -72,6 +84,12 @@ def _expand_bounds(
         max_lat_p = lat_center + half
 
     return (min_lon_p, max_lon_p, min_lat_p, max_lat_p)
+
+
+def _parse_optional_float(value: str | None, field_name: str) -> float | None:
+    if value is None or not str(value).strip():
+        return None
+    return parse_float(str(value), field_name)
 
 
 def main(page: ft.Page) -> None:
@@ -211,6 +229,88 @@ def main(page: ft.Page) -> None:
     cdf_max_field = ft.TextField(label="CDF max", value="1.5", width=140)
     cdf_step_field = ft.TextField(label="CDF step", value="0.1", width=140)
     fixed_cdf_field = ft.TextField(label="Fixed CDF", value="1.0", width=140)
+
+    stochastic_selected_zip_text = ft.Text("Nenhum arquivo selecionado", color="#4B6385")
+    stochastic_selected_current_dataset_text = ft.Text(
+        "Nenhum arquivo selecionado (usa water_dataset_path do YAML).",
+        color="#4B6385",
+    )
+    stochastic_selected_wind_dataset_text = ft.Text(
+        "Nenhum arquivo selecionado (reader de vento opcional).",
+        color="#4B6385",
+    )
+    stochastic_forcing_source_dropdown = ft.Dropdown(
+        label="Forcing Source",
+        value="COPERNICUS",
+        options=[
+            ft.dropdown.Option("COPERNICUS"),
+            ft.dropdown.Option("NOAA"),
+            ft.dropdown.Option("REMO"),
+        ],
+        width=220,
+    )
+    stochastic_environment_dropdown = ft.Dropdown(
+        label="Environment",
+        value=environment_names[0],
+        options=[ft.dropdown.Option(name) for name in environment_names],
+        width=260,
+    )
+    stochastic_start_index_field = ft.TextField(label="Start timestep index", value="1", width=180)
+    stochastic_base_environmental_offset_hours_field = ft.TextField(
+        label="Base env offset (h)",
+        value="-3",
+        width=180,
+    )
+    stochastic_run_name_field = ft.TextField(label="Run name", value="", width=240)
+    stochastic_n_simulations_field = ft.TextField(label="N simulations", value="10", width=160)
+    stochastic_seed_field = ft.TextField(label="Seed", value="42", width=120)
+
+    stochastic_cdf_enabled_checkbox = ft.Checkbox(label="Vary CDF", value=True)
+    stochastic_cdf_mean_field = ft.TextField(label="CDF mean", value="1.0", width=130)
+    stochastic_cdf_std_field = ft.TextField(label="CDF std", value="0.1", width=130)
+    stochastic_cdf_min_field = ft.TextField(label="CDF min", value="0.8", width=130)
+    stochastic_cdf_max_field = ft.TextField(label="CDF max", value="1.2", width=130)
+    stochastic_cdf_truncate_checkbox = ft.Checkbox(label="Truncate", value=True)
+
+    stochastic_wdf_enabled_checkbox = ft.Checkbox(label="Vary WDF", value=True)
+    stochastic_wdf_mean_field = ft.TextField(label="WDF mean", value="0.035", width=130)
+    stochastic_wdf_std_field = ft.TextField(label="WDF std", value="0.001", width=130)
+    stochastic_wdf_min_field = ft.TextField(label="WDF min", value="0.032", width=130)
+    stochastic_wdf_max_field = ft.TextField(label="WDF max", value="0.038", width=130)
+    stochastic_wdf_truncate_checkbox = ft.Checkbox(label="Truncate", value=True)
+
+    stochastic_tau_enabled_checkbox = ft.Checkbox(label="Vary temporal lag", value=True)
+    stochastic_tau_mean_field = ft.TextField(label="Tau mean", value="0", width=130)
+    stochastic_tau_std_field = ft.TextField(label="Tau std", value="30", width=130)
+    stochastic_tau_min_field = ft.TextField(label="Tau min", value="-120", width=130)
+    stochastic_tau_max_field = ft.TextField(label="Tau max", value="120", width=130)
+    stochastic_tau_input_unit_dropdown = ft.Dropdown(
+        label="Tau unit",
+        value="minutes",
+        options=[
+            ft.dropdown.Option("seconds"),
+            ft.dropdown.Option("minutes"),
+            ft.dropdown.Option("hours"),
+        ],
+        width=140,
+    )
+    stochastic_tau_rounding_dropdown = ft.Dropdown(
+        label="Granularity",
+        value="minutes",
+        options=[
+            ft.dropdown.Option("seconds"),
+            ft.dropdown.Option("minutes"),
+        ],
+        width=150,
+    )
+    stochastic_tau_truncate_checkbox = ft.Checkbox(label="Truncate", value=True)
+
+    stochastic_grid_lon_min_field = ft.TextField(label="Lon min", value="", width=130)
+    stochastic_grid_lon_max_field = ft.TextField(label="Lon max", value="", width=130)
+    stochastic_grid_lat_min_field = ft.TextField(label="Lat min", value="", width=130)
+    stochastic_grid_lat_max_field = ft.TextField(label="Lat max", value="", width=130)
+    stochastic_grid_resolution_field = ft.TextField(label="Resolution", value="0.001", width=140)
+    stochastic_grid_margin_field = ft.TextField(label="Margin", value="0.0", width=120)
 
     run_mode_dropdown = ft.Dropdown(
         label="Mode",
@@ -384,6 +484,22 @@ def main(page: ft.Page) -> None:
                     while next_pct <= pct:
                         next_pct += 5
                     state["next_progress_log_pct"] = next_pct
+        elif event_type == "stochastic_progress":
+            done = int(payload.get("done", 0))
+            total = max(1, int(payload.get("total", 1)))
+            pct = int(round((done / total) * 100))
+            progress_bar.value = done / total
+            progress_text.value = f"{pct}%"
+            status_subtitle.value = f"Simulação estocástica em andamento ({done}/{total})"
+            next_pct = int(state.get("next_progress_log_pct", 0))
+            if done == total or pct >= next_pct:
+                append_log(f"Stochastic progress: {done}/{total} ({pct}%)")
+                if done == total:
+                    state["next_progress_log_pct"] = 101
+                else:
+                    while next_pct <= pct:
+                        next_pct += 5
+                    state["next_progress_log_pct"] = next_pct
         elif event_type == "batch_start":
             index = int(payload.get("index", 0))
             total = int(payload.get("total", 0))
@@ -446,6 +562,24 @@ def main(page: ft.Page) -> None:
             refresh_results()
             refresh_artifacts()
             show_message("Execução concluída.")
+        elif event_type == "stochastic_done":
+            result = payload["result"]
+            state["running"] = False
+            state["out_dir"] = result.output_path
+            state["sim_path"] = None
+            duration = time.monotonic() - (state["start_time"] or time.monotonic())
+            result_runtime_text.value = f"{duration:.1f} s"
+            status_title.value = "Completed"
+            status_subtitle.value = (
+                f"Estocástica finalizada: "
+                f"{result.successful_simulations}/{result.total_simulations} válidas"
+            )
+            progress_bar.value = 1.0
+            progress_text.value = "100%"
+            output_path_text.value = str(result.output_path)
+            refresh_results()
+            refresh_artifacts()
+            show_message("Simulação estocástica concluída.")
         elif event_type == "cancelled":
             state["running"] = False
             recovered_out_dir, recovered_sim_path = recover_output_from_run_id(state.get("run_id"))
@@ -661,6 +795,120 @@ def main(page: ft.Page) -> None:
             writer.flush()
             event_queue.put({"type": "error", "message": traceback.format_exc()})
 
+    def build_stochastic_request(
+        staged_zip: Path,
+        run_id: str,
+        observed_bounds: tuple[float, float, float, float],
+        current_dataset_paths: list[str],
+        wind_dataset_paths: list[str],
+    ) -> StochasticValidationRunRequest:
+        seed_raw = (stochastic_seed_field.value or "").strip()
+        seed = int(seed_raw) if seed_raw else None
+        n_simulations = int(stochastic_n_simulations_field.value or 0)
+        run_name = (stochastic_run_name_field.value or "").strip() or run_id
+        margin = parse_float(stochastic_grid_margin_field.value, "Grid margin")
+        grid = StochasticGridConfig(
+            lon_min=_parse_optional_float(stochastic_grid_lon_min_field.value, "Lon min")
+            if stochastic_grid_lon_min_field.value
+            else observed_bounds[0],
+            lon_max=_parse_optional_float(stochastic_grid_lon_max_field.value, "Lon max")
+            if stochastic_grid_lon_max_field.value
+            else observed_bounds[1],
+            lat_min=_parse_optional_float(stochastic_grid_lat_min_field.value, "Lat min")
+            if stochastic_grid_lat_min_field.value
+            else observed_bounds[2],
+            lat_max=_parse_optional_float(stochastic_grid_lat_max_field.value, "Lat max")
+            if stochastic_grid_lat_max_field.value
+            else observed_bounds[3],
+            spatial_resolution=parse_float(stochastic_grid_resolution_field.value, "Grid resolution"),
+            margin=margin,
+        )
+        stochastic_config = StochasticRunConfig(
+            run_name=run_name,
+            n_simulations=n_simulations,
+            seed=seed,
+            output_root=project_root / "data" / "2-simulated" / "stochastic",
+            grid=grid,
+            cdf=StochasticParameterConfig(
+                enabled=bool(stochastic_cdf_enabled_checkbox.value),
+                mean=parse_float(stochastic_cdf_mean_field.value, "CDF mean"),
+                std=parse_float(stochastic_cdf_std_field.value, "CDF std"),
+                min_value=parse_float(stochastic_cdf_min_field.value, "CDF min"),
+                max_value=parse_float(stochastic_cdf_max_field.value, "CDF max"),
+                truncate=bool(stochastic_cdf_truncate_checkbox.value),
+                default_value=parse_float(stochastic_cdf_mean_field.value, "CDF mean"),
+            ),
+            wdf=StochasticParameterConfig(
+                enabled=bool(stochastic_wdf_enabled_checkbox.value),
+                mean=parse_float(stochastic_wdf_mean_field.value, "WDF mean"),
+                std=parse_float(stochastic_wdf_std_field.value, "WDF std"),
+                min_value=parse_float(stochastic_wdf_min_field.value, "WDF min"),
+                max_value=parse_float(stochastic_wdf_max_field.value, "WDF max"),
+                truncate=bool(stochastic_wdf_truncate_checkbox.value),
+                default_value=parse_float(stochastic_wdf_mean_field.value, "WDF mean"),
+            ),
+            temporal_lag=TemporalLagConfig(
+                enabled=bool(stochastic_tau_enabled_checkbox.value),
+                mean=parse_float(stochastic_tau_mean_field.value, "Tau mean"),
+                std=parse_float(stochastic_tau_std_field.value, "Tau std"),
+                min_value=parse_float(stochastic_tau_min_field.value, "Tau min"),
+                max_value=parse_float(stochastic_tau_max_field.value, "Tau max"),
+                input_unit=stochastic_tau_input_unit_dropdown.value or "minutes",
+                rounding_granularity=stochastic_tau_rounding_dropdown.value or "minutes",
+                truncate=bool(stochastic_tau_truncate_checkbox.value),
+                default_seconds=0.0,
+            ),
+        )
+
+        return StochasticValidationRunRequest(
+            stochastic_config=stochastic_config,
+            config_name="main",
+            environment=stochastic_environment_dropdown.value or "2019",
+            forcing_source=stochastic_forcing_source_dropdown.value or "COPERNICUS",
+            shp_zip=str(staged_zip),
+            min_long=observed_bounds[0],
+            max_long=observed_bounds[1],
+            min_lat=observed_bounds[2],
+            max_lat=observed_bounds[3],
+            start_index=int(stochastic_start_index_field.value or 1),
+            padding_animation_frame=0.1,
+            run_name=run_name,
+            current_dataset_path=(current_dataset_paths[0] if current_dataset_paths else None),
+            wind_dataset_path=(wind_dataset_paths[0] if wind_dataset_paths else None),
+            current_dataset_paths=current_dataset_paths,
+            wind_dataset_paths=wind_dataset_paths,
+            environmental_offset_hours=parse_float(
+                stochastic_base_environmental_offset_hours_field.value,
+                "Base env offset (h)",
+            ),
+        )
+
+    def worker_run_stochastic(request: StochasticValidationRunRequest) -> None:
+        controller = SimulationController()
+        writer = QueueWriter(event_queue)
+
+        def on_progress(done: int, total: int) -> None:
+            event_queue.put({"type": "stochastic_progress", "done": done, "total": total})
+
+        try:
+            with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                result = controller.run_stochastic_validation(
+                    request,
+                    progress_callback=on_progress,
+                    should_cancel=state["cancel_event"].is_set,
+                )
+            writer.flush()
+            event_queue.put({"type": "stochastic_done", "result": result})
+        except RuntimeError as exc:
+            writer.flush()
+            if "cancel" in str(exc).lower():
+                event_queue.put({"type": "cancelled"})
+            else:
+                event_queue.put({"type": "error", "message": traceback.format_exc()})
+        except Exception:
+            writer.flush()
+            event_queue.put({"type": "error", "message": traceback.format_exc()})
+
     def start_execution(e: ft.ControlEvent) -> None:
         if state["running"]:
             status_title.value = "Blocked"
@@ -787,6 +1035,89 @@ def main(page: ft.Page) -> None:
         thread = threading.Thread(target=worker_run_validation, args=(requests,), daemon=True)
         thread.start()
 
+    def start_stochastic_execution(e: ft.ControlEvent) -> None:
+        if state["running"]:
+            status_title.value = "Blocked"
+            status_subtitle.value = "Já existe execução em andamento."
+            set_screen("Execution")
+            append_log("Stochastic start blocked: there is already an execution running.")
+            page.update()
+            show_message("Já existe uma execução em andamento.", error=True)
+            return
+        if state["downloading"]:
+            show_message("Aguarde o término do download do ambiente.", error=True)
+            return
+
+        set_screen("Execution")
+        reset_execution_panel()
+        status_title.value = "Preparing"
+        status_subtitle.value = "Validando configuração estocástica..."
+        append_log("Stochastic simulation requested by user.")
+        page.update()
+
+        try:
+            if not state["selected_zip"]:
+                raise ValueError("Selecione o ZIP com o spill observado.")
+            source_zip = Path(state["selected_zip"])
+            selected_current_datasets = [str(path) for path in state["selected_current_datasets"]]
+            selected_wind_datasets = [str(path) for path in state["selected_wind_datasets"]]
+            for current_dataset in selected_current_datasets:
+                current_path = Path(current_dataset)
+                if not current_path.exists():
+                    raise ValueError(f"Arquivo de correnteza não encontrado: {current_path}")
+            for wind_dataset in selected_wind_datasets:
+                wind_path = Path(wind_dataset)
+                if not wind_path.exists():
+                    raise ValueError(f"Arquivo de vento não encontrado: {wind_path}")
+
+            has_prj = validate_observed_zip(source_zip)
+            observed_bounds_raw = extract_observed_bounds(source_zip)
+            observed_bounds = _expand_bounds(observed_bounds_raw)
+            run_id = build_run_id().replace("validation", "stochastic", 1)
+            staged_zip = stage_observed_zip(project_root, run_id, source_zip)
+            request = build_stochastic_request(
+                staged_zip=staged_zip,
+                run_id=run_id,
+                observed_bounds=observed_bounds,
+                current_dataset_paths=selected_current_datasets,
+                wind_dataset_paths=selected_wind_datasets,
+            )
+            if not has_prj:
+                append_log("Warning: observed ZIP has no .prj file.")
+            state["run_id"] = request.stochastic_config.run_name
+            state["staged_zip"] = str(staged_zip)
+            append_log(
+                "Observed bounds (raw) "
+                f"lon=[{observed_bounds_raw[0]:.5f},{observed_bounds_raw[1]:.5f}] "
+                f"lat=[{observed_bounds_raw[2]:.5f},{observed_bounds_raw[3]:.5f}]"
+            )
+            append_log(
+                "Stochastic grid bounds "
+                f"lon=[{request.stochastic_config.grid.lon_min:.5f},"
+                f"{request.stochastic_config.grid.lon_max:.5f}] "
+                f"lat=[{request.stochastic_config.grid.lat_min:.5f},"
+                f"{request.stochastic_config.grid.lat_max:.5f}] "
+                f"resolution={request.stochastic_config.grid.spatial_resolution:g}"
+            )
+        except Exception as exc:
+            status_title.value = "Failed"
+            status_subtitle.value = "Falha na validação de entrada."
+            append_log(traceback.format_exc())
+            page.update()
+            show_message(str(exc), error=True)
+            return
+
+        state["running"] = True
+        state["cancel_event"].clear()
+        state["start_time"] = time.monotonic()
+        reset_execution_panel()
+        append_log(f"Run ID: {state['run_id']}")
+        append_log(f"Staged observed ZIP: {state['staged_zip']}")
+        page.update()
+
+        thread = threading.Thread(target=worker_run_stochastic, args=(request,), daemon=True)
+        thread.start()
+
     def start_environment_download(e: ft.ControlEvent) -> None:
         if state["running"]:
             show_message("Não é possível baixar dados durante uma execução.", error=True)
@@ -867,6 +1198,7 @@ def main(page: ft.Page) -> None:
             return
         state["selected_zip"] = selected_path
         selected_zip_text.value = selected_path
+        stochastic_selected_zip_text.value = selected_path
         page.update()
 
     def choose_zip(e: ft.ControlEvent) -> None:
@@ -886,11 +1218,13 @@ def main(page: ft.Page) -> None:
         if not selected_paths:
             return
         state["selected_current_datasets"] = selected_paths
-        selected_current_dataset_text.value = (
+        selected_label = (
             f"{len(selected_paths)} arquivo(s): " + ", ".join(Path(path).name for path in selected_paths[:3])
         )
         if len(selected_paths) > 3:
-            selected_current_dataset_text.value += ", ..."
+            selected_label += ", ..."
+        selected_current_dataset_text.value = selected_label
+        stochastic_selected_current_dataset_text.value = selected_label
         page.update()
 
     def choose_current_dataset(e: ft.ControlEvent) -> None:
@@ -910,11 +1244,13 @@ def main(page: ft.Page) -> None:
         if not selected_paths:
             return
         state["selected_wind_datasets"] = selected_paths
-        selected_wind_dataset_text.value = (
+        selected_label = (
             f"{len(selected_paths)} arquivo(s): " + ", ".join(Path(path).name for path in selected_paths[:3])
         )
         if len(selected_paths) > 3:
-            selected_wind_dataset_text.value += ", ..."
+            selected_label += ", ..."
+        selected_wind_dataset_text.value = selected_label
+        stochastic_selected_wind_dataset_text.value = selected_label
         page.update()
 
     def choose_wind_dataset(e: ft.ControlEvent) -> None:
@@ -950,6 +1286,50 @@ def main(page: ft.Page) -> None:
                 cdf_max_field=cdf_max_field,
                 cdf_step_field=cdf_step_field,
                 start_execution=start_execution,
+            )
+        ),
+        "Simulação Estocástica": build_stochastic_view(
+            StochasticViewBindings(
+                choose_zip=choose_zip,
+                selected_zip_text=stochastic_selected_zip_text,
+                choose_current_dataset=choose_current_dataset,
+                selected_current_dataset_text=stochastic_selected_current_dataset_text,
+                choose_wind_dataset=choose_wind_dataset,
+                selected_wind_dataset_text=stochastic_selected_wind_dataset_text,
+                forcing_source_dropdown=stochastic_forcing_source_dropdown,
+                environment_dropdown=stochastic_environment_dropdown,
+                start_index_field=stochastic_start_index_field,
+                base_environmental_offset_hours_field=stochastic_base_environmental_offset_hours_field,
+                run_name_field=stochastic_run_name_field,
+                n_simulations_field=stochastic_n_simulations_field,
+                seed_field=stochastic_seed_field,
+                cdf_enabled_checkbox=stochastic_cdf_enabled_checkbox,
+                cdf_mean_field=stochastic_cdf_mean_field,
+                cdf_std_field=stochastic_cdf_std_field,
+                cdf_min_field=stochastic_cdf_min_field,
+                cdf_max_field=stochastic_cdf_max_field,
+                cdf_truncate_checkbox=stochastic_cdf_truncate_checkbox,
+                wdf_enabled_checkbox=stochastic_wdf_enabled_checkbox,
+                wdf_mean_field=stochastic_wdf_mean_field,
+                wdf_std_field=stochastic_wdf_std_field,
+                wdf_min_field=stochastic_wdf_min_field,
+                wdf_max_field=stochastic_wdf_max_field,
+                wdf_truncate_checkbox=stochastic_wdf_truncate_checkbox,
+                tau_enabled_checkbox=stochastic_tau_enabled_checkbox,
+                tau_mean_field=stochastic_tau_mean_field,
+                tau_std_field=stochastic_tau_std_field,
+                tau_min_field=stochastic_tau_min_field,
+                tau_max_field=stochastic_tau_max_field,
+                tau_input_unit_dropdown=stochastic_tau_input_unit_dropdown,
+                tau_rounding_dropdown=stochastic_tau_rounding_dropdown,
+                tau_truncate_checkbox=stochastic_tau_truncate_checkbox,
+                grid_lon_min_field=stochastic_grid_lon_min_field,
+                grid_lon_max_field=stochastic_grid_lon_max_field,
+                grid_lat_min_field=stochastic_grid_lat_min_field,
+                grid_lat_max_field=stochastic_grid_lat_max_field,
+                grid_resolution_field=stochastic_grid_resolution_field,
+                grid_margin_field=stochastic_grid_margin_field,
+                start_stochastic_execution=start_stochastic_execution,
             )
         ),
         "Execution": build_execution_view(

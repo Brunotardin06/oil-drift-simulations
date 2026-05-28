@@ -19,9 +19,11 @@ from .views import (
     ExecutionViewBindings,
     ResultsViewBindings,
     SetupViewBindings,
+    StochasticViewBindings,
     build_artifacts_view,
     build_execution_view,
     build_results_view,
     build_setup_view,
     build_sidebar,
+    build_stochastic_view,
 )

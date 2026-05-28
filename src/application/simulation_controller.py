@@ -22,6 +22,7 @@ from src.application.dto import (
     ObservedSpillContext,
     ObservedSpillRequest,
     SimulationRunRequest,
+    StochasticValidationRunRequest,
     ValidationRunRequest,
     ValidationRunResult,
 )
@@ -32,6 +33,7 @@ from src.infrastructure.copernicus_gateway import CopernicusGateway
 from src.services.optimization_service import OptimizationService
 from src.services.output_service import OutputService
 from src.services.simulation_service import SimulationService
+from src.services.stochastic.stochastic_simulation_service import StochasticSimulationService
 
 
 class _ProgressPrinter:
@@ -102,6 +104,7 @@ class SimulationController:
         optimization_service: Optional[OptimizationService] = None,
         simulation_service: Optional[SimulationService] = None,
         output_service: Optional[OutputService] = None,
+        stochastic_service: Optional[StochasticSimulationService] = None,
     ) -> None:
         self.spill_repository = spill_repository or SpillRepository()
         self.environment_repository = environment_repository or EnvironmentRepository()
@@ -114,6 +117,9 @@ class SimulationController:
             spill_repository=self.spill_repository
         )
         self.output_service = output_service or OutputService()
+        self.stochastic_service = stochastic_service or StochasticSimulationService(
+            simulation_service=self.simulation_service
+        )
 
     @staticmethod
     def _normalize_forcing_source(value: Optional[str]) -> str:
@@ -519,6 +525,7 @@ class SimulationController:
         current_dataset_paths=None,
         wind_dataset_paths=None,
         environmental_offset_hours=None,
+        temporal_lag_seconds=None,
     ):
         return self.simulation_service.simulate_drift(
             manchas=manchas,
@@ -538,6 +545,7 @@ class SimulationController:
             wind_dataset_paths=wind_dataset_paths,
             observed_offset_hours=observed_offset_hours,
             environmental_offset_hours=environmental_offset_hours,
+            temporal_lag_seconds=temporal_lag_seconds,
         )
 
     def run_simulation_request(self, request: SimulationRunRequest):
@@ -559,6 +567,7 @@ class SimulationController:
             wind_dataset_paths=request.wind_dataset_paths,
             observed_offset_hours=request.observed_offset_hours,
             environmental_offset_hours=request.environmental_offset_hours,
+            temporal_lag_seconds=request.temporal_lag_seconds,
         )
 
     def generate_comparison_gif(self, **kwargs):
@@ -1026,4 +1035,56 @@ class SimulationController:
             comparison_gif=compare_gif,
             frames_dir=frames_dir,
             artifact_paths=artifact_paths,
+        )
+
+    def run_stochastic_validation(
+        self,
+        request: StochasticValidationRunRequest,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+    ):
+        validation_request = ValidationRunRequest(
+            config_name=request.config_name,
+            environment=request.environment,
+            shp_zip=request.shp_zip,
+            min_long=request.min_long,
+            max_long=request.max_long,
+            min_lat=request.min_lat,
+            max_lat=request.max_lat,
+            start_index=request.start_index,
+            padding_animation_frame=request.padding_animation_frame,
+            run_name=request.run_name or request.stochastic_config.run_name,
+            forcing_source=request.forcing_source,
+            current_dataset_path=request.current_dataset_path,
+            wind_dataset_path=request.wind_dataset_path,
+            current_dataset_paths=request.current_dataset_paths,
+            wind_dataset_paths=request.wind_dataset_paths,
+            environmental_offset_hours=request.environmental_offset_hours,
+            disable_environment_offset=request.disable_environment_offset,
+            oil_types=request.oil_types,
+            oil_types_file=request.oil_types_file,
+            processes_dispersion=request.processes_dispersion,
+            processes_evaporation=request.processes_evaporation,
+            skip_animation=True,
+            skip_plots=True,
+        )
+        self._check_cancelled(should_cancel)
+        context = self._build_validation_context(validation_request)
+        return self.stochastic_service.run(
+            manchas=context.real_manchas,
+            base_config=context.config,
+            stochastic_config=request.stochastic_config,
+            padding_animation_frame=request.padding_animation_frame,
+            forcing_source=context.forcing_source,
+            current_dataset_paths=[str(path) for path in context.current_dataset_paths],
+            wind_dataset_paths=[str(path) for path in context.wind_dataset_paths],
+            observed_offset_hours=float(context.offset_hours),
+            environmental_offset_hours=float(context.environmental_offset_hours),
+            oil_type=context.selected_oil_type,
+            processes_dispersion=context.processes_dispersion,
+            processes_evaporation=context.processes_evaporation,
+            progress_callback=progress_callback,
+            should_cancel=should_cancel,
+            log_callback=log_callback,
         )

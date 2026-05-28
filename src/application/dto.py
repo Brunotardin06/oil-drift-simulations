@@ -36,7 +36,7 @@ class ConfigRequest:
 class ObservedSpillRequest:
     spill_path: Path
     offset_hours: float = 0.0
-    start_index: int = 0
+    start_index: int = 1
     padding_animation_frame: float = 0.1
 
 
@@ -83,6 +83,7 @@ class SimulationRunRequest:
     wind_dataset_paths: Optional[Sequence[str]] = None
     observed_offset_hours: Optional[float] = None
     environmental_offset_hours: Optional[float] = None
+    temporal_lag_seconds: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,32 @@ class ValidationRunRequest:
     current_dataset_paths: Optional[Sequence[str]] = None
     wind_dataset_paths: Optional[Sequence[str]] = None
     disable_environment_offset: bool = False
+
+
+@dataclass(frozen=True)
+class StochasticValidationRunRequest:
+    stochastic_config: Any
+    config_name: str = "main"
+    environment: str = "2019"
+    shp_zip: Optional[str] = None
+    min_long: Optional[float] = None
+    max_long: Optional[float] = None
+    min_lat: Optional[float] = None
+    max_lat: Optional[float] = None
+    start_index: int = 1
+    padding_animation_frame: float = 0.1
+    run_name: Optional[str] = None
+    forcing_source: str = "COPERNICUS"
+    current_dataset_path: Optional[str] = None
+    wind_dataset_path: Optional[str] = None
+    current_dataset_paths: Optional[Sequence[str]] = None
+    wind_dataset_paths: Optional[Sequence[str]] = None
+    environmental_offset_hours: Optional[float] = None
+    disable_environment_offset: bool = False
+    oil_types: Optional[str] = None
+    oil_types_file: Optional[str] = None
+    processes_dispersion: Optional[str] = None
+    processes_evaporation: Optional[str] = None
 
 
 @dataclass(frozen=True)

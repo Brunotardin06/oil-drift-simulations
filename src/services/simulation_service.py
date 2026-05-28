@@ -34,6 +34,7 @@ class SimulationService:
         wind_offset: bool = False,
         sal_temp_offset: bool = False,
         environmental_offset_hours: Optional[float] = None,
+        temporal_lag_seconds: Optional[float] = None,
     ):
         reader = reader_netCDF_CF_generic.Reader(dataset_path)
         offset_hours = None
@@ -47,7 +48,15 @@ class SimulationService:
             current_offset or wind_offset or sal_temp_offset
         ):
             offset_hours = float(environmental_offset_hours)
-        if offset_hours:
+        if temporal_lag_seconds is not None and (
+            current_offset or wind_offset or sal_temp_offset
+        ):
+            reader.shift_start_time(
+                reader.start_time
+                + timedelta(hours=float(offset_hours or 0.0))
+                + timedelta(seconds=float(temporal_lag_seconds))
+            )
+        elif offset_hours:
             reader.shift_start_time(reader.start_time + timedelta(hours=float(offset_hours)))
         return reader
 
@@ -70,6 +79,7 @@ class SimulationService:
         wind_dataset_paths=None,
         observed_offset_hours=None,
         environmental_offset_hours=None,
+        temporal_lag_seconds=None,
     ):
         offset_hours = observed_offset_hours
         if offset_hours is None:
@@ -127,6 +137,7 @@ class SimulationService:
                 path,
                 current_offset=True,
                 environmental_offset_hours=environmental_offset_hours,
+                temporal_lag_seconds=temporal_lag_seconds,
             )
             for path in current_paths
         ]
@@ -135,6 +146,7 @@ class SimulationService:
                 path,
                 wind_offset=True,
                 environmental_offset_hours=environmental_offset_hours,
+                temporal_lag_seconds=temporal_lag_seconds,
             )
             for path in wind_paths
         ]
@@ -147,6 +159,7 @@ class SimulationService:
                 sal_temp_path,
                 sal_temp_offset=True,
                 environmental_offset_hours=environmental_offset_hours,
+                temporal_lag_seconds=temporal_lag_seconds,
             )
         )
         model.add_reader(readers)
