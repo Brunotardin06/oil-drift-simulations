@@ -270,14 +270,12 @@ def main(page: ft.Page) -> None:
     stochastic_cdf_std_field = ft.TextField(label="CDF std", value="0.1", width=130)
     stochastic_cdf_min_field = ft.TextField(label="CDF min", value="0.8", width=130)
     stochastic_cdf_max_field = ft.TextField(label="CDF max", value="1.2", width=130)
-    stochastic_cdf_truncate_checkbox = ft.Checkbox(label="Truncate", value=True)
 
     stochastic_wdf_enabled_checkbox = ft.Checkbox(label="Vary WDF", value=True)
     stochastic_wdf_mean_field = ft.TextField(label="WDF mean", value="0.035", width=130)
     stochastic_wdf_std_field = ft.TextField(label="WDF std", value="0.001", width=130)
     stochastic_wdf_min_field = ft.TextField(label="WDF min", value="0.032", width=130)
     stochastic_wdf_max_field = ft.TextField(label="WDF max", value="0.038", width=130)
-    stochastic_wdf_truncate_checkbox = ft.Checkbox(label="Truncate", value=True)
 
     stochastic_tau_enabled_checkbox = ft.Checkbox(label="Vary temporal lag", value=True)
     stochastic_tau_mean_field = ft.TextField(label="Tau mean", value="0", width=130)
@@ -303,7 +301,6 @@ def main(page: ft.Page) -> None:
         ],
         width=150,
     )
-    stochastic_tau_truncate_checkbox = ft.Checkbox(label="Truncate", value=True)
 
     stochastic_grid_lon_min_field = ft.TextField(label="Lon min", value="", width=130)
     stochastic_grid_lon_max_field = ft.TextField(label="Lon max", value="", width=130)
@@ -835,7 +832,6 @@ def main(page: ft.Page) -> None:
                 std=parse_float(stochastic_cdf_std_field.value, "CDF std"),
                 min_value=parse_float(stochastic_cdf_min_field.value, "CDF min"),
                 max_value=parse_float(stochastic_cdf_max_field.value, "CDF max"),
-                truncate=bool(stochastic_cdf_truncate_checkbox.value),
                 default_value=parse_float(stochastic_cdf_mean_field.value, "CDF mean"),
             ),
             wdf=StochasticParameterConfig(
@@ -844,7 +840,6 @@ def main(page: ft.Page) -> None:
                 std=parse_float(stochastic_wdf_std_field.value, "WDF std"),
                 min_value=parse_float(stochastic_wdf_min_field.value, "WDF min"),
                 max_value=parse_float(stochastic_wdf_max_field.value, "WDF max"),
-                truncate=bool(stochastic_wdf_truncate_checkbox.value),
                 default_value=parse_float(stochastic_wdf_mean_field.value, "WDF mean"),
             ),
             temporal_lag=TemporalLagConfig(
@@ -855,7 +850,6 @@ def main(page: ft.Page) -> None:
                 max_value=parse_float(stochastic_tau_max_field.value, "Tau max"),
                 input_unit=stochastic_tau_input_unit_dropdown.value or "minutes",
                 rounding_granularity=stochastic_tau_rounding_dropdown.value or "minutes",
-                truncate=bool(stochastic_tau_truncate_checkbox.value),
                 default_seconds=0.0,
             ),
         )
@@ -1308,13 +1302,11 @@ def main(page: ft.Page) -> None:
                 cdf_std_field=stochastic_cdf_std_field,
                 cdf_min_field=stochastic_cdf_min_field,
                 cdf_max_field=stochastic_cdf_max_field,
-                cdf_truncate_checkbox=stochastic_cdf_truncate_checkbox,
                 wdf_enabled_checkbox=stochastic_wdf_enabled_checkbox,
                 wdf_mean_field=stochastic_wdf_mean_field,
                 wdf_std_field=stochastic_wdf_std_field,
                 wdf_min_field=stochastic_wdf_min_field,
                 wdf_max_field=stochastic_wdf_max_field,
-                wdf_truncate_checkbox=stochastic_wdf_truncate_checkbox,
                 tau_enabled_checkbox=stochastic_tau_enabled_checkbox,
                 tau_mean_field=stochastic_tau_mean_field,
                 tau_std_field=stochastic_tau_std_field,
@@ -1322,7 +1314,6 @@ def main(page: ft.Page) -> None:
                 tau_max_field=stochastic_tau_max_field,
                 tau_input_unit_dropdown=stochastic_tau_input_unit_dropdown,
                 tau_rounding_dropdown=stochastic_tau_rounding_dropdown,
-                tau_truncate_checkbox=stochastic_tau_truncate_checkbox,
                 grid_lon_min_field=stochastic_grid_lon_min_field,
                 grid_lon_max_field=stochastic_grid_lon_max_field,
                 grid_lat_min_field=stochastic_grid_lat_min_field,

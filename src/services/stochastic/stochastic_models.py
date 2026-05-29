@@ -13,7 +13,6 @@ class StochasticParameterConfig:
     min_value: float
     max_value: float
     distribution: str = "normal"
-    truncate: bool = True
     default_value: Optional[float] = None
 
 
@@ -27,7 +26,6 @@ class TemporalLagConfig:
     input_unit: str = "seconds"
     rounding_granularity: str = "seconds"
     distribution: str = "normal"
-    truncate: bool = True
     default_seconds: float = 0.0
 
 

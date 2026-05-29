@@ -124,7 +124,6 @@ class ParameterSampler:
             std=config.std,
             min_value=config.min_value,
             max_value=config.max_value,
-            truncate=config.truncate,
         )
 
     def _sample_temporal_lag_original(
@@ -141,7 +140,6 @@ class ParameterSampler:
             std=config.std,
             min_value=config.min_value,
             max_value=config.max_value,
-            truncate=config.truncate,
         )
 
     def _temporal_lag_to_seconds(self, value: float, config: TemporalLagConfig) -> float:
@@ -159,14 +157,9 @@ class ParameterSampler:
         std: float,
         min_value: float,
         max_value: float,
-        truncate: bool,
     ) -> float:
         if std == 0:
             return float(np.clip(mean, min_value, max_value))
-
-        if not truncate:
-            value = rng.normal(mean, std)
-            return float(np.clip(value, min_value, max_value))
 
         for _ in range(10_000):
             value = float(rng.normal(mean, std))

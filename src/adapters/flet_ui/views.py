@@ -70,13 +70,11 @@ class StochasticViewBindings:
     cdf_std_field: ft.TextField
     cdf_min_field: ft.TextField
     cdf_max_field: ft.TextField
-    cdf_truncate_checkbox: ft.Checkbox
     wdf_enabled_checkbox: ft.Checkbox
     wdf_mean_field: ft.TextField
     wdf_std_field: ft.TextField
     wdf_min_field: ft.TextField
     wdf_max_field: ft.TextField
-    wdf_truncate_checkbox: ft.Checkbox
     tau_enabled_checkbox: ft.Checkbox
     tau_mean_field: ft.TextField
     tau_std_field: ft.TextField
@@ -84,7 +82,6 @@ class StochasticViewBindings:
     tau_max_field: ft.TextField
     tau_input_unit_dropdown: ft.Dropdown
     tau_rounding_dropdown: ft.Dropdown
-    tau_truncate_checkbox: ft.Checkbox
     grid_lon_min_field: ft.TextField
     grid_lon_max_field: ft.TextField
     grid_lat_min_field: ft.TextField
@@ -379,7 +376,6 @@ def build_stochastic_view(bindings: StochasticViewBindings) -> ft.Container:
                                     bindings.cdf_std_field,
                                     bindings.cdf_min_field,
                                     bindings.cdf_max_field,
-                                    bindings.cdf_truncate_checkbox,
                                 ],
                             ),
                         ],
@@ -402,7 +398,6 @@ def build_stochastic_view(bindings: StochasticViewBindings) -> ft.Container:
                                     bindings.wdf_std_field,
                                     bindings.wdf_min_field,
                                     bindings.wdf_max_field,
-                                    bindings.wdf_truncate_checkbox,
                                 ],
                             ),
                         ],
@@ -427,7 +422,6 @@ def build_stochastic_view(bindings: StochasticViewBindings) -> ft.Container:
                                     bindings.tau_max_field,
                                     bindings.tau_input_unit_dropdown,
                                     bindings.tau_rounding_dropdown,
-                                    bindings.tau_truncate_checkbox,
                                 ],
                             ),
                         ],
