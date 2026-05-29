@@ -95,6 +95,46 @@ class DriftRasterConverter:
 
         return self.rasterize_points(lon_values, lat_values, grid)
 
+    def convert_simulation_to_binary_arrays_by_time(
+        self,
+        simulation_path: Path,
+        grid: FixedGrid,
+        start_time_index: int = 1,
+    ) -> list[tuple[int, str, np.ndarray]]:
+        grid.validate()
+        simulation_path = Path(simulation_path)
+        with xr.open_dataset(simulation_path) as dataset:
+            lon = dataset["lon"]
+            lat = dataset["lat"]
+            time_values = dataset["time"].values
+            time_count = len(time_values)
+            if start_time_index < 0:
+                start_time_index = max(0, time_count + start_time_index)
+            if start_time_index >= time_count:
+                return []
+
+            arrays: list[tuple[int, str, np.ndarray]] = []
+            for time_index in range(start_time_index, time_count):
+                count = self.rasterize_points(
+                    lon.isel(time=time_index).values,
+                    lat.isel(time=time_index).values,
+                    grid,
+                )
+                arrays.append(
+                    (
+                        time_index,
+                        self._format_time_value(time_values[time_index]),
+                        (count > 0).astype(np.uint8),
+                    )
+                )
+            return arrays
+
+    @staticmethod
+    def _format_time_value(value) -> str:
+        if np.issubdtype(np.asarray(value).dtype, np.datetime64):
+            return str(np.datetime_as_string(value, unit="s"))
+        return str(value)
+
     def rasterize_points(
         self,
         lon_values,

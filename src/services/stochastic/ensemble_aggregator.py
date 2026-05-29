@@ -67,10 +67,12 @@ class EnsembleAggregator:
         result: EnsembleAggregationResult,
         output_dir: Path,
         grid: FixedGrid,
+        hit_count_filename: str = "hit_count_map.tif",
+        probability_filename: str = "probability_map.tif",
     ) -> EnsembleAggregationResult:
         output_dir = Path(output_dir)
-        hit_count_path = output_dir / "hit_count_map.tif"
-        probability_path = output_dir / "probability_map.tif"
+        hit_count_path = output_dir / hit_count_filename
+        probability_path = output_dir / probability_filename
 
         self.converter.save_geotiff(result.hit_count, hit_count_path, grid, dtype=np.uint32)
         self.converter.save_geotiff(result.probability_map, probability_path, grid, dtype=np.float32)

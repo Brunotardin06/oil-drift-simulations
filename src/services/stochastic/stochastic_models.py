@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -82,3 +82,6 @@ class StochasticRunResult:
     summary_path: Path
     hit_count_map_path: Optional[Path] = None
     probability_map_path: Optional[Path] = None
+    hit_count_final_timestep_map_path: Optional[Path] = None
+    probability_final_timestep_map_path: Optional[Path] = None
+    hourly_probability_map_paths: Tuple[Path, ...] = ()
