@@ -50,6 +50,7 @@ EMPTY_IMAGE_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAA
 OBSERVED_BOUNDS_PADDING_DEG = 1.0
 MIN_OBSERVED_BOUNDS_SPAN_DEG = 2.0
 MAX_ENVIRONMENTAL_OFFSET_RANGE_HOURS = 24
+STOCHASTIC_GRID_MARGIN_DEG = 1.0
 
 
 def _enum_value(enum_name: str, member_name: str, fallback):
@@ -263,6 +264,7 @@ def main(page: ft.Page) -> None:
     )
     stochastic_run_name_field = ft.TextField(label="Run name", value="", width=240)
     stochastic_n_simulations_field = ft.TextField(label="N simulations", value="10", width=160)
+    stochastic_number_of_workers_field = ft.TextField(label="Number of workers", value="4", width=180)
     stochastic_seed_field = ft.TextField(label="Seed", value="42", width=120)
 
     stochastic_cdf_enabled_checkbox = ft.Checkbox(label="Vary CDF", value=True)
@@ -307,7 +309,11 @@ def main(page: ft.Page) -> None:
     stochastic_grid_lat_min_field = ft.TextField(label="Lat min", value="", width=130)
     stochastic_grid_lat_max_field = ft.TextField(label="Lat max", value="", width=130)
     stochastic_grid_resolution_field = ft.TextField(label="Resolution", value="0.001", width=140)
-    stochastic_grid_margin_field = ft.TextField(label="Margin", value="0.0", width=120)
+    stochastic_grid_margin_field = ft.TextField(
+        label="Margin",
+        value=f"{STOCHASTIC_GRID_MARGIN_DEG:g}",
+        width=120,
+    )
 
     run_mode_dropdown = ft.Dropdown(
         label="Mode",
@@ -802,8 +808,13 @@ def main(page: ft.Page) -> None:
         seed_raw = (stochastic_seed_field.value or "").strip()
         seed = int(seed_raw) if seed_raw else None
         n_simulations = int(stochastic_n_simulations_field.value or 0)
+        number_of_workers = int(stochastic_number_of_workers_field.value or 4)
         run_name = (stochastic_run_name_field.value or "").strip() or run_id
-        margin = parse_float(stochastic_grid_margin_field.value, "Grid margin")
+        margin = (
+            parse_float(stochastic_grid_margin_field.value, "Grid margin")
+            if (stochastic_grid_margin_field.value or "").strip()
+            else STOCHASTIC_GRID_MARGIN_DEG
+        )
         grid = StochasticGridConfig(
             lon_min=_parse_optional_float(stochastic_grid_lon_min_field.value, "Lon min")
             if stochastic_grid_lon_min_field.value
@@ -824,6 +835,7 @@ def main(page: ft.Page) -> None:
             run_name=run_name,
             n_simulations=n_simulations,
             seed=seed,
+            number_of_workers=number_of_workers,
             output_root=project_root / "data" / "2-simulated" / "stochastic",
             grid=grid,
             cdf=StochasticParameterConfig(
@@ -1296,6 +1308,7 @@ def main(page: ft.Page) -> None:
                 base_environmental_offset_hours_field=stochastic_base_environmental_offset_hours_field,
                 run_name_field=stochastic_run_name_field,
                 n_simulations_field=stochastic_n_simulations_field,
+                number_of_workers_field=stochastic_number_of_workers_field,
                 seed_field=stochastic_seed_field,
                 cdf_enabled_checkbox=stochastic_cdf_enabled_checkbox,
                 cdf_mean_field=stochastic_cdf_mean_field,

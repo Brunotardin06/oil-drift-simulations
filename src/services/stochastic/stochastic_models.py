@@ -51,7 +51,7 @@ class StochasticRunConfig:
     grid: StochasticGridConfig
     output_root: Path
     execution_mode: str = "deterministic_ensemble"
-    number_of_workers: int = 1
+    number_of_workers: int = 4
 
 
 @dataclass(frozen=True)

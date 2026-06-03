@@ -64,6 +64,7 @@ class StochasticViewBindings:
     base_environmental_offset_hours_field: ft.TextField
     run_name_field: ft.TextField
     n_simulations_field: ft.TextField
+    number_of_workers_field: ft.TextField
     seed_field: ft.TextField
     cdf_enabled_checkbox: ft.Checkbox
     cdf_mean_field: ft.TextField
@@ -351,6 +352,7 @@ def build_stochastic_view(bindings: StochasticViewBindings) -> ft.Container:
                                 controls=[
                                     bindings.run_name_field,
                                     bindings.n_simulations_field,
+                                    bindings.number_of_workers_field,
                                     bindings.seed_field,
                                     bindings.start_index_field,
                                     bindings.base_environmental_offset_hours_field,

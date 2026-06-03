@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import multiprocessing as mp
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -18,6 +20,53 @@ from src.services.stochastic.stochastic_models import (
     StochasticRunResult,
 )
 from src.services.stochastic.stochastic_output_service import StochasticOutputService
+
+
+def _build_member_config(base_config, simulation_data_root: Path, simulation_name: str):
+    member_config = copy.deepcopy(base_config)
+    member_config.paths.simulation_data = str(simulation_data_root)
+    member_config.simulation.name = simulation_name
+    return member_config
+
+
+def _run_stochastic_member_worker(payload: dict) -> SampledParameterSet:
+    sample: SampledParameterSet = payload["sample"]
+    run_name = f"run_{sample.simulation_id:04d}"
+    member_config = _build_member_config(
+        base_config=payload["base_config"],
+        simulation_data_root=Path(payload["individual_runs_dir"]),
+        simulation_name=run_name,
+    )
+    output_dir = Path(payload["individual_runs_dir"]) / run_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_filename = "simulation"
+    output_path = output_dir / f"{out_filename}.nc"
+
+    try:
+        SimulationService().simulate_drift(
+            manchas=payload["manchas"].copy(),
+            out_filename=out_filename,
+            config=member_config,
+            skip_animation=True,
+            padding_animation_frame=payload["padding_animation_frame"],
+            wind_drift_factor=sample.wdf,
+            current_drift_factor=sample.cdf,
+            oil_type=payload["oil_type"],
+            processes_dispersion=payload["processes_dispersion"],
+            processes_evaporation=payload["processes_evaporation"],
+            forcing_source=payload["forcing_source"],
+            current_dataset_paths=payload["current_dataset_paths"],
+            wind_dataset_paths=payload["wind_dataset_paths"],
+            observed_offset_hours=payload["observed_offset_hours"],
+            environmental_offset_hours=payload["environmental_offset_hours"],
+            temporal_lag_seconds=sample.temporal_lag_seconds,
+        )
+
+        if not output_path.exists():
+            raise FileNotFoundError(f"Simulation output was not created: {output_path}")
+        return replace(sample, status="success", output_path=str(output_path))
+    except Exception as exc:
+        return replace(sample, status="failed", error_message=str(exc), output_path=str(output_path))
 
 
 class StochasticSimulationService:
@@ -85,57 +134,107 @@ class StochasticSimulationService:
             f"resolution={grid.spatial_resolution:g} crs={grid.crs}"
         )
 
-        updated_samples: list[SampledParameterSet] = []
-        successful_paths: list[Path] = []
+        sample_results: dict[int, SampledParameterSet] = {
+            sample.simulation_id: sample for sample in samples
+        }
+        worker_count = min(max(1, int(stochastic_config.number_of_workers)), len(samples))
+        log(f"Running deterministic members with {worker_count} worker(s).")
+
+        worker_payload = {
+            "manchas": manchas,
+            "base_config": base_config,
+            "individual_runs_dir": paths["individual_runs_dir"],
+            "padding_animation_frame": padding_animation_frame,
+            "forcing_source": forcing_source,
+            "current_dataset_paths": current_dataset_paths,
+            "wind_dataset_paths": wind_dataset_paths,
+            "observed_offset_hours": observed_offset_hours,
+            "environmental_offset_hours": environmental_offset_hours,
+            "oil_type": oil_type,
+            "processes_dispersion": processes_dispersion,
+            "processes_evaporation": processes_evaporation,
+        }
+
+        completed_simulations = 0
+        if worker_count == 1:
+            for sample in samples:
+                check_cancelled()
+                log(
+                    f"[{sample.simulation_id + 1}/{len(samples)}] "
+                    f"cdf={sample.cdf:.6g} wdf={sample.wdf:.6g} "
+                    f"tau={sample.temporal_lag_seconds:.0f}s seed={sample.seed}"
+                )
+                result = _run_stochastic_member_worker({**worker_payload, "sample": sample})
+                sample_results[result.simulation_id] = result
+                if result.status == "failed":
+                    log(f"Simulation {result.simulation_id} failed: {result.error_message}")
+                completed_simulations += 1
+                self.output_service.write_samples(
+                    self._ordered_samples(sample_results),
+                    paths["sampled_parameters_path"],
+                )
+                if progress_callback is not None:
+                    progress_callback(completed_simulations, len(samples))
+        else:
+            with ProcessPoolExecutor(
+                max_workers=worker_count,
+                mp_context=mp.get_context("spawn"),
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        _run_stochastic_member_worker,
+                        {**worker_payload, "sample": sample},
+                    ): sample
+                    for sample in samples
+                }
+                for future in as_completed(futures):
+                    check_cancelled()
+                    sample = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        output_path = (
+                            paths["individual_runs_dir"]
+                            / f"run_{sample.simulation_id:04d}"
+                            / "simulation.nc"
+                        )
+                        result = replace(
+                            sample,
+                            status="failed",
+                            error_message=str(exc),
+                            output_path=str(output_path),
+                        )
+                    sample_results[result.simulation_id] = result
+                    if result.status == "failed":
+                        log(f"Simulation {result.simulation_id} failed: {result.error_message}")
+                    completed_simulations += 1
+                    self.output_service.write_samples(
+                        self._ordered_samples(sample_results),
+                        paths["sampled_parameters_path"],
+                    )
+                    if progress_callback is not None:
+                        progress_callback(completed_simulations, len(samples))
+
+        check_cancelled()
         hit_count: Optional[np.ndarray] = None
         hit_count_final_timestep: Optional[np.ndarray] = None
         hourly_hit_counts: list[np.ndarray] = []
         hourly_time_indices: list[int] = []
         hourly_time_labels: list[str] = []
+        successful_paths: list[Path] = []
         valid_simulations = 0
+        hit_count_map_path = None
+        probability_map_path = None
+        hit_count_final_timestep_map_path = None
+        probability_final_timestep_map_path = None
+        hourly_probability_map_paths: list[Path] = []
 
-        for sample in samples:
-            check_cancelled()
-            run_name = f"run_{sample.simulation_id:04d}"
-            member_config = self._build_member_config(
-                base_config=base_config,
-                simulation_data_root=paths["individual_runs_dir"],
-                simulation_name=run_name,
-            )
-            output_dir = paths["individual_runs_dir"] / run_name
-            output_dir.mkdir(parents=True, exist_ok=True)
-            out_filename = "simulation"
-            output_path = output_dir / f"{out_filename}.nc"
-
-            log(
-                f"[{sample.simulation_id + 1}/{len(samples)}] "
-                f"cdf={sample.cdf:.6g} wdf={sample.wdf:.6g} "
-                f"tau={sample.temporal_lag_seconds:.0f}s seed={sample.seed}"
-            )
-
+        log("Aggregating valid simulation outputs.")
+        for sample in self._ordered_samples(sample_results):
+            if sample.status != "success":
+                continue
+            output_path = Path(sample.output_path)
             try:
-                self.simulation_service.simulate_drift(
-                    manchas=manchas.copy(),
-                    out_filename=out_filename,
-                    config=member_config,
-                    skip_animation=True,
-                    padding_animation_frame=padding_animation_frame,
-                    wind_drift_factor=sample.wdf,
-                    current_drift_factor=sample.cdf,
-                    oil_type=oil_type,
-                    processes_dispersion=processes_dispersion,
-                    processes_evaporation=processes_evaporation,
-                    forcing_source=forcing_source,
-                    current_dataset_paths=current_dataset_paths,
-                    wind_dataset_paths=wind_dataset_paths,
-                    observed_offset_hours=observed_offset_hours,
-                    environmental_offset_hours=environmental_offset_hours,
-                    temporal_lag_seconds=sample.temporal_lag_seconds,
-                )
-
-                if not output_path.exists():
-                    raise FileNotFoundError(f"Simulation output was not created: {output_path}")
-
                 binary = self.converter.convert_simulation_to_binary_array(output_path, grid)
                 hourly_binaries = self.converter.convert_simulation_to_binary_arrays_by_time(
                     output_path, grid, start_time_index=1
@@ -179,27 +278,20 @@ class StochasticSimulationService:
                             )
                         hourly_hit_counts[hour_index] += binary_by_time.astype(np.uint32)
 
-                valid_simulations += 1
                 successful_paths.append(output_path)
-                updated_samples.append(
-                    replace(sample, status="success", output_path=str(output_path))
-                )
+                valid_simulations += 1
             except Exception as exc:
-                log(f"Simulation {sample.simulation_id} failed: {exc}")
-                updated_samples.append(
-                    replace(sample, status="failed", error_message=str(exc), output_path=str(output_path))
+                log(f"Simulation {sample.simulation_id} raster aggregation failed: {exc}")
+                sample_results[sample.simulation_id] = replace(
+                    sample,
+                    status="failed",
+                    error_message=f"Raster aggregation failed: {exc}",
                 )
 
-            self.output_service.write_samples(updated_samples + samples[len(updated_samples):], paths["sampled_parameters_path"])
-            if progress_callback is not None:
-                progress_callback(len(updated_samples), len(samples))
-
-        check_cancelled()
-        hit_count_map_path = None
-        probability_map_path = None
-        hit_count_final_timestep_map_path = None
-        probability_final_timestep_map_path = None
-        hourly_probability_map_paths: list[Path] = []
+        self.output_service.write_samples(
+            self._ordered_samples(sample_results),
+            paths["sampled_parameters_path"],
+        )
 
         if valid_simulations:
             probability_map = hit_count.astype(np.float32) / float(valid_simulations)
@@ -295,11 +387,11 @@ class StochasticSimulationService:
         )
 
     @staticmethod
-    def _build_member_config(base_config, simulation_data_root: Path, simulation_name: str):
-        member_config = copy.deepcopy(base_config)
-        member_config.paths.simulation_data = str(simulation_data_root)
-        member_config.simulation.name = simulation_name
-        return member_config
+    def _ordered_samples(samples_by_id: dict[int, SampledParameterSet]) -> list[SampledParameterSet]:
+        return [
+            samples_by_id[simulation_id]
+            for simulation_id in sorted(samples_by_id)
+        ]
 
     def _save_hourly_probability_rasters(
         self,
