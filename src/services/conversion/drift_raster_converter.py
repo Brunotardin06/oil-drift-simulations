@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import rasterio
@@ -127,6 +127,46 @@ class DriftRasterConverter:
                         (count > 0).astype(np.uint8),
                     )
                 )
+            return arrays
+
+    def convert_simulation_to_binary_arrays_for_times(
+        self,
+        simulation_path: Path,
+        grid: FixedGrid,
+        expected_times: Sequence[object],
+        start_time_index: int = 1,
+    ) -> list[tuple[int, str, np.ndarray]]:
+        grid.validate()
+        expected_time_values = np.asarray(list(expected_times), dtype="datetime64[ns]")
+        if start_time_index < 0:
+            start_time_index = max(0, len(expected_time_values) + start_time_index)
+        if start_time_index >= len(expected_time_values):
+            return []
+
+        simulation_path = Path(simulation_path)
+        with xr.open_dataset(simulation_path) as dataset:
+            lon = dataset["lon"]
+            lat = dataset["lat"]
+            dataset_time_values = np.asarray(dataset["time"].values, dtype="datetime64[ns]")
+            time_lookup = {
+                int(time_value.astype(np.int64)): position
+                for position, time_value in enumerate(dataset_time_values)
+            }
+
+            arrays: list[tuple[int, str, np.ndarray]] = []
+            for time_index in range(start_time_index, len(expected_time_values)):
+                expected_time = expected_time_values[time_index]
+                dataset_time_index = time_lookup.get(int(expected_time.astype(np.int64)))
+                if dataset_time_index is None:
+                    binary = np.zeros((grid.height, grid.width), dtype=np.uint8)
+                else:
+                    count = self.rasterize_points(
+                        lon.isel(time=dataset_time_index).values,
+                        lat.isel(time=dataset_time_index).values,
+                        grid,
+                    )
+                    binary = (count > 0).astype(np.uint8)
+                arrays.append((time_index, self._format_time_value(expected_time), binary))
             return arrays
 
     @staticmethod

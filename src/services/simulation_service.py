@@ -51,10 +51,13 @@ class SimulationService:
         if temporal_lag_seconds is not None and (
             current_offset or wind_offset or sal_temp_offset
         ):
+            # A sampled lag describes the environmental source time:
+            # simulation_time + lag. Shifting the reader axis by -lag makes
+            # that source field available at the unchanged simulation time.
             reader.shift_start_time(
                 reader.start_time
                 + timedelta(hours=float(offset_hours or 0.0))
-                + timedelta(seconds=float(temporal_lag_seconds))
+                - timedelta(seconds=float(temporal_lag_seconds))
             )
         elif offset_hours:
             reader.shift_start_time(reader.start_time + timedelta(hours=float(offset_hours)))

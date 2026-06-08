@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 import numpy as np
+import pandas as pd
+import xarray as xr
 
 from src.services.conversion.drift_raster_converter import DriftRasterConverter
 from src.services.simulation_service import SimulationService
@@ -27,6 +29,31 @@ def _build_member_config(base_config, simulation_data_root: Path, simulation_nam
     member_config.paths.simulation_data = str(simulation_data_root)
     member_config.simulation.name = simulation_name
     return member_config
+
+
+def _normalize_simulation_output_timeline(
+    output_path: Path,
+    expected_output_times: Sequence[object],
+) -> None:
+    output_path = Path(output_path)
+    expected_index = pd.DatetimeIndex(pd.to_datetime(list(expected_output_times)))
+    if expected_index.empty:
+        return
+
+    tmp_path = output_path.with_suffix(f"{output_path.suffix}.tmp")
+    normalized = None
+    try:
+        with xr.open_dataset(output_path) as dataset:
+            normalized = dataset.reindex(time=expected_index.values).load()
+            normalized.attrs = dataset.attrs.copy()
+            normalized.attrs["time_coverage_start"] = str(expected_index[0].to_pydatetime())
+            normalized.attrs["time_coverage_end"] = str(expected_index[-1].to_pydatetime())
+        normalized.to_netcdf(tmp_path)
+        tmp_path.replace(output_path)
+    finally:
+        if normalized is not None:
+            normalized.close()
+        tmp_path.unlink(missing_ok=True)
 
 
 def _run_stochastic_member_worker(payload: dict) -> SampledParameterSet:
@@ -64,6 +91,10 @@ def _run_stochastic_member_worker(payload: dict) -> SampledParameterSet:
 
         if not output_path.exists():
             raise FileNotFoundError(f"Simulation output was not created: {output_path}")
+        _normalize_simulation_output_timeline(
+            output_path=output_path,
+            expected_output_times=payload["expected_output_times"],
+        )
         return replace(sample, status="success", output_path=str(output_path))
     except Exception as exc:
         return replace(sample, status="failed", error_message=str(exc), output_path=str(output_path))
@@ -124,10 +155,20 @@ class StochasticSimulationService:
 
         self.output_service.write_config(stochastic_config, paths["config_path"])
         self.output_service.write_samples(samples, paths["sampled_parameters_path"])
+        expected_output_times = self._expected_output_times(
+            manchas=manchas,
+            base_config=base_config,
+            observed_offset_hours=observed_offset_hours,
+        )
         log(
             f"Starting stochastic run '{stochastic_config.run_name}' with "
             f"{stochastic_config.n_simulations} deterministic simulations."
         )
+        if expected_output_times:
+            log(
+                f"Fixed output timeline: {len(expected_output_times)} timestep(s), "
+                f"{expected_output_times[0]} to {expected_output_times[-1]}."
+            )
         log(
             f"Fixed grid: lon=[{grid.lon_min:.6f},{grid.lon_max:.6f}] "
             f"lat=[{grid.lat_min:.6f},{grid.lat_max:.6f}] "
@@ -153,6 +194,7 @@ class StochasticSimulationService:
             "oil_type": oil_type,
             "processes_dispersion": processes_dispersion,
             "processes_evaporation": processes_evaporation,
+            "expected_output_times": expected_output_times,
         }
 
         completed_simulations = 0
@@ -236,8 +278,11 @@ class StochasticSimulationService:
             output_path = Path(sample.output_path)
             try:
                 binary = self.converter.convert_simulation_to_binary_array(output_path, grid)
-                hourly_binaries = self.converter.convert_simulation_to_binary_arrays_by_time(
-                    output_path, grid, start_time_index=1
+                hourly_binaries = self.converter.convert_simulation_to_binary_arrays_for_times(
+                    output_path,
+                    grid,
+                    expected_times=expected_output_times,
+                    start_time_index=1,
                 )
                 if hourly_binaries:
                     binary_final_timestep = hourly_binaries[-1][2]
@@ -263,10 +308,15 @@ class StochasticSimulationService:
                             for _, _, binary_by_time in hourly_binaries
                         ]
                     elif len(hourly_binaries) != len(hourly_hit_counts):
-                        raise ValueError(
-                            "Simulation output time count differs from previous valid members. "
-                            f"Expected {len(hourly_hit_counts)} timesteps after initial, "
-                            f"got {len(hourly_binaries)}."
+                        log(
+                            f"Simulation {sample.simulation_id} has "
+                            f"{len(hourly_binaries)} hourly rasters after initial; "
+                            f"expected {len(hourly_hit_counts)}. Missing hours are zero-filled."
+                        )
+                        hourly_binaries = self._pad_or_trim_hourly_binaries(
+                            hourly_binaries=hourly_binaries,
+                            expected_count=len(hourly_hit_counts),
+                            grid_shape=hit_count.shape,
                         )
 
                     for hour_index, (_, _, binary_by_time) in enumerate(hourly_binaries):
@@ -392,6 +442,64 @@ class StochasticSimulationService:
             samples_by_id[simulation_id]
             for simulation_id in sorted(samples_by_id)
         ]
+
+    def _expected_output_times(
+        self,
+        manchas,
+        base_config,
+        observed_offset_hours: Optional[float],
+    ) -> tuple[str, ...]:
+        manchas_for_time = manchas.copy()
+        offset_hours = observed_offset_hours
+        if offset_hours is None:
+            offset_hours = float(
+                getattr(
+                    getattr(base_config.copernicusmarine, "specificities", object()),
+                    "datetime_offset_hours",
+                    0,
+                )
+                or 0.0
+            )
+        self.simulation_service.spill_repository.ensure_datetime_column(
+            manchas_for_time,
+            offset_hours=float(offset_hours or 0.0),
+        )
+        datetimes = pd.to_datetime(manchas_for_time["datetime"]).sort_values()
+        if datetimes.empty:
+            return ()
+
+        start_time = pd.Timestamp(datetimes.iloc[0])
+        end_time = pd.Timestamp(datetimes.iloc[-1])
+        step_minutes = float(getattr(base_config.simulation, "output_time_step_minutes", 60) or 60)
+        step = pd.Timedelta(minutes=step_minutes)
+        if step <= pd.Timedelta(0):
+            raise ValueError("simulation output_time_step_minutes must be > 0")
+
+        times: list[str] = []
+        current_time = start_time
+        while current_time <= end_time:
+            times.append(current_time.isoformat())
+            current_time += step
+        return tuple(times)
+
+    @staticmethod
+    def _pad_or_trim_hourly_binaries(
+        hourly_binaries: list[tuple[int, str, np.ndarray]],
+        expected_count: int,
+        grid_shape: tuple[int, int],
+    ) -> list[tuple[int, str, np.ndarray]]:
+        if len(hourly_binaries) >= expected_count:
+            return hourly_binaries[:expected_count]
+        padded = list(hourly_binaries)
+        for time_index in range(len(hourly_binaries) + 1, expected_count + 1):
+            padded.append(
+                (
+                    time_index,
+                    f"missing_{time_index:03d}",
+                    np.zeros(grid_shape, dtype=np.uint8),
+                )
+            )
+        return padded
 
     def _save_hourly_probability_rasters(
         self,
